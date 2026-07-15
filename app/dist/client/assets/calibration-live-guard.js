@@ -6,6 +6,7 @@
     fixing: false,
     mirroring: false,
     lastFocus: null,
+    calibrationSearch: "",
   };
   const LOGO_URL = new URL("/assets/winshaw-logo.png?v=winshaw-logo-20260713", window.location.origin).href;
   const WATERMARK_URL = new URL("/assets/winshaw-watermark.png?v=winshaw-watermark-20260713", window.location.origin).href;
@@ -1538,6 +1539,7 @@
     const pageTitle = currentAssetRegisterPage();
     const globalSearch = document.querySelector('input[placeholder="Search any asset information"]');
     if (!pageTitle) {
+      document.querySelectorAll(".asset-advanced-search[data-calibrio-asset-search]").forEach((panel) => panel.remove());
       if (globalSearch?.closest("label")?.dataset.calibrioHiddenForAssetRegister) {
         globalSearch.closest("label").style.display = "";
         delete globalSearch.closest("label").dataset.calibrioHiddenForAssetRegister;
@@ -1621,12 +1623,55 @@
     if (toolbarCount && rows.length && toolbarCount.textContent !== toolbarText) toolbarCount.textContent = toolbarText;
   };
 
+  const applyCalibrationIdSearch = () => {
+    const heading = document.querySelector(".body h1, section.main h1")?.textContent?.trim();
+    if (heading !== "Calibrations") return;
+    const panel = document.querySelector(".calibration-panel");
+    const toolbar = panel?.querySelector(".asset-toolbar");
+    if (!panel || !toolbar) return;
+
+    let search = toolbar.querySelector(".calibration-id-search input");
+    if (!search) {
+      toolbar.insertAdjacentHTML("beforeend", `
+        <label class="calibration-id-search">Search Calibration ID
+          <input type="text" placeholder="CAL-000001" aria-label="Search Calibration ID" data-calibrio-calibration-id-search>
+        </label>`);
+      search = toolbar.querySelector(".calibration-id-search input");
+    }
+
+    if (search && search.value !== state.calibrationSearch) search.value = state.calibrationSearch;
+
+    const rows = [...panel.querySelectorAll("table tbody tr")];
+    const needle = normalizeAssetSearchText(state.calibrationSearch);
+    let visible = 0;
+    for (const row of rows) {
+      const calibrationId = normalizeAssetSearchText(row.cells?.[0]?.textContent || "");
+      const matches = !needle || calibrationId.includes(needle);
+      row.style.display = matches ? "" : "none";
+      if (matches) visible += 1;
+    }
+
+    const count = toolbar.querySelector("b");
+    if (count) {
+      const nextText = needle && rows.length ? `${visible} of ${rows.length} calibrations` : `${rows.length} calibrations`;
+      if (count.textContent !== nextText) count.textContent = nextText;
+    }
+  };
+
   document.addEventListener("input", (event) => {
     if (event.target?.matches?.("[data-calibrio-asset-search-field]")) applyAssetRegisterSearch();
+    if (event.target?.matches?.("[data-calibrio-calibration-id-search]")) {
+      state.calibrationSearch = event.target.value || "";
+      applyCalibrationIdSearch();
+    }
   }, true);
 
   document.addEventListener("change", (event) => {
     if (event.target?.matches?.("[data-calibrio-asset-search-field]")) applyAssetRegisterSearch();
+    if (event.target?.matches?.("[data-calibrio-calibration-id-search]")) {
+      state.calibrationSearch = event.target.value || "";
+      applyCalibrationIdSearch();
+    }
   }, true);
 
   document.addEventListener("click", (event) => {
@@ -1746,6 +1791,7 @@
     applyPreviewAssets();
     completeVisibleCertificatePreviews();
     applyAssetRegisterSearch();
+    applyCalibrationIdSearch();
   }))
     .observe(document.documentElement, { childList: true, subtree: true });
 
@@ -1761,6 +1807,7 @@
       applyPreviewAssets();
       completeVisibleCertificatePreviews();
       applyAssetRegisterSearch();
+      applyCalibrationIdSearch();
     }, { once: true });
   } else {
     restoreActiveDraft();
@@ -1773,5 +1820,6 @@
     applyPreviewAssets();
     completeVisibleCertificatePreviews();
     applyAssetRegisterSearch();
+    applyCalibrationIdSearch();
   }
 })();

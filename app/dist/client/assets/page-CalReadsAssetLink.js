@@ -7280,7 +7280,7 @@ function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, col
 	] });
 }
 function CalibrationWorkspace({ assets, onAssetsChange }) {
-	const [records, setRecords] = (0, import_react.useState)([]), [customers, setCustomers] = (0, import_react.useState)([]), [certificateTypes, setCertificateTypes] = (0, import_react.useState)(["WS-WP-CRT-004"]), [editing, setEditing] = (0, import_react.useState)(false), [editingRecordId, setEditingRecordId] = (0, import_react.useState)(null), [preview, setPreview] = (0, import_react.useState)(null), [form, setForm] = (0, import_react.useState)(blankCalibration());
+	const [records, setRecords] = (0, import_react.useState)([]), [customers, setCustomers] = (0, import_react.useState)([]), [certificateTypes, setCertificateTypes] = (0, import_react.useState)(["WS-WP-CRT-004"]), [editing, setEditing] = (0, import_react.useState)(false), [editingRecordId, setEditingRecordId] = (0, import_react.useState)(null), [preview, setPreview] = (0, import_react.useState)(null), [form, setForm] = (0, import_react.useState)(blankCalibration()), [calibrationSearch, setCalibrationSearch] = (0, import_react.useState)("");
 	(0, import_react.useEffect)(() => {
 		try {
 			let loadedRecords = [];
@@ -7331,6 +7331,8 @@ function CalibrationWorkspace({ assets, onAssetsChange }) {
 	}, []);
 	const standards = assets.filter((asset) => asset.classification === "Lab Standard");
 	const assetOptions = assets.filter((asset) => asset.classification !== "Lab Standard");
+	const calibrationSearchNeedle = String(calibrationSearch || "").trim().toLowerCase();
+	const filteredRecords = calibrationSearchNeedle ? records.filter((record) => String(record?.id || "").toLowerCase().includes(calibrationSearchNeedle)) : records;
 	const set = (key, value) => setForm((current) => ({
 		...current,
 		[key]: value
@@ -7527,9 +7529,23 @@ function CalibrationWorkspace({ assets, onAssetsChange }) {
 		}),
 		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
 			className: "panel calibration-panel",
-			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 				className: "asset-toolbar",
-				children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("b", { children: [records.length, " calibrations"] })
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("b", { children: [filteredRecords.length === records.length ? records.length : `${filteredRecords.length} of ${records.length}`, " calibrations"] }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+						className: "calibration-id-search",
+						children: [
+							"Search Calibration ID",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+								value: calibrationSearch,
+								onChange: (event) => setCalibrationSearch(event.target.value),
+								placeholder: "CAL-000001",
+								"aria-label": "Search Calibration ID"
+							})
+						]
+					})
+				]
 			}), records.length ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 				className: "table",
 				children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("table", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: [
@@ -7539,7 +7555,7 @@ function CalibrationWorkspace({ assets, onAssetsChange }) {
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Asset" }),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Pressure Rating" }),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Date" }),
-				] }) }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", { children: records.map((record) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: [
+				] }) }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", { children: filteredRecords.map((record) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: [
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: record.id }),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: record.certificateType }),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: record.customer }),
