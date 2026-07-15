@@ -7,6 +7,9 @@
     mirroring: false,
     lastFocus: null,
     calibrationSearch: "",
+    certificateTemplateSearch: "",
+    activeCertificateTemplateId: "",
+    certificateTemplateDrawerMode: "view",
   };
   const LOGO_URL = new URL("/assets/winshaw-logo.png?v=winshaw-logo-20260713", window.location.origin).href;
   const WATERMARK_URL = new URL("/assets/winshaw-watermark.png?v=winshaw-watermark-20260713", window.location.origin).href;
@@ -1706,6 +1709,13 @@
       closePreviewButton.closest(".calibrio-calibration-preview-fallback,.certificate-preview-shade,.shade")?.remove();
       return;
     }
+    const templateButton = event.target?.closest?.("[data-calibrio-certificate-template-action]");
+    if (templateButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      handleCertificateTemplateAction(templateButton.dataset.calibrioCertificateTemplateAction, templateButton.dataset.certificateId || "");
+      return;
+    }
     const assetButton = event.target?.closest?.("[data-calibrio-open-asset]");
     if (assetButton) {
       if (assetButton.classList.contains("asset-id-detail-link")) return;
@@ -1758,6 +1768,467 @@
     }
   }, true);
 
+  const CERT_TEMPLATE_KEY = "calibrio-certificates";
+  const LEGACY_CERT_TYPES_KEY = "calibrio-certificate-types";
+  const CERT_TEMPLATE_NAV_KEY = "calibrio-template-target-page";
+  const CERT_TEMPLATE_FORM_KEY = "calibrio-template-open-calibration-form";
+  const CERT_TYPE_OPTIONS = [
+    ["pressure_gauge", "Pressure Gauge"],
+    ["pressure_transducer", "Pressure Transducer"],
+    ["torque", "Torque"],
+    ["electrical", "Electrical"],
+    ["dimensional", "Dimensional"],
+    ["temperature", "Temperature"],
+    ["other", "Other"],
+  ];
+
+  const splitTemplateAliases = (value) => String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const normalizeTemplateType = (value) => {
+    const normalized = String(value || "pressure_gauge").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    if (normalized === "pressure") return "pressure_gauge";
+    return CERT_TYPE_OPTIONS.some(([option]) => option === normalized) ? normalized : "other";
+  };
+
+  const displayTemplateType = (value) => CERT_TYPE_OPTIONS.find(([option]) => option === normalizeTemplateType(value))?.[1] || "Other";
+  const normalizeTemplatePoints = (value, fallback = 5) => {
+    const points = Number.parseInt(String(value || ""), 10);
+    return Number.isFinite(points) && points > 0 ? points : fallback;
+  };
+
+  const normalizeTemplateRequires = (requires) => ({
+    asFoundInc: requires?.asFoundInc !== false,
+    asFoundDec: requires?.asFoundDec !== false,
+    asLeftInc: requires?.asLeftInc !== false,
+    asLeftDec: requires?.asLeftDec !== false,
+  });
+
+  const defaultCertificateTemplate = () => ({
+    id: "CERT-001",
+    name: "Pressure Gauge",
+    primaryProcedure: "WS-WP-CRT-004",
+    aliases: ["WS-WP-7.2", "CRT-004", "WS-WP-CRT-004_rev_002"],
+    type: "pressure_gauge",
+    rev: "002",
+    unit: "PSI",
+    testPoints: 5,
+    includeZero: false,
+    defaultAccuracy: "\u00b11.0%",
+    requires: { asFoundInc: true, asFoundDec: true, asLeftInc: true, asLeftDec: true },
+    description: "",
+  });
+
+  const normalizeCertificateTemplate = (template, index = 0) => {
+    const isPressure = /pressure|WS-WP-CRT-004/i.test(String(template?.type || template?.name || template?.primaryProcedure || ""));
+    return {
+      id: String(template?.id || `CERT-${String(index + 1).padStart(3, "0")}`),
+      name: String(template?.name || template?.certificateName || template?.primaryProcedure || "Pressure Gauge"),
+      primaryProcedure: String(template?.primaryProcedure || template?.procedure || "WS-WP-CRT-004").trim(),
+      aliases: Array.isArray(template?.aliases) ? template.aliases.map((item) => String(item).trim()).filter(Boolean) : splitTemplateAliases(template?.aliases),
+      type: normalizeTemplateType(template?.type || (isPressure ? "pressure_gauge" : "other")),
+      rev: String(template?.rev || template?.revision || ""),
+      unit: String(template?.unit || template?.rangeLabel || "PSI"),
+      testPoints: normalizeTemplatePoints(template?.testPoints ?? template?.points, isPressure ? 5 : 1),
+      includeZero: template?.includeZero === true,
+      defaultAccuracy: String(template?.defaultAccuracy || template?.accuracy || (isPressure ? "\u00b11.0%" : "")),
+      requires: normalizeTemplateRequires(template?.requires),
+      description: String(template?.description || ""),
+    };
+  };
+
+  const legacyTemplateProcedureList = (templates) => [
+    ...new Set(templates.flatMap((template) => [template.primaryProcedure, ...(template.aliases || [])]).filter(Boolean)),
+  ];
+
+  const nextCertificateTemplateId = (templates) => {
+    const nextNumber = templates.reduce((max, template) => {
+      const match = String(template.id || "").match(/CERT-(\d+)/i);
+      return match ? Math.max(max, Number.parseInt(match[1], 10)) : max;
+    }, 0) + 1;
+    return `CERT-${String(nextNumber).padStart(3, "0")}`;
+  };
+
+  const persistCertificateTemplates = (templates) => {
+    try {
+      localStorage.setItem(CERT_TEMPLATE_KEY, JSON.stringify(templates));
+      localStorage.setItem(LEGACY_CERT_TYPES_KEY, JSON.stringify(legacyTemplateProcedureList(templates)));
+    } catch {}
+  };
+
+  const readCertificateTemplates = () => {
+    const saved = readJsonArray(CERT_TEMPLATE_KEY);
+    if (saved.length) {
+      const normalized = saved.map(normalizeCertificateTemplate);
+      persistCertificateTemplates(normalized);
+      return normalized;
+    }
+    const legacy = readJsonArray(LEGACY_CERT_TYPES_KEY).filter((item) => typeof item === "string" && item.trim());
+    if (legacy.length) {
+      const migrated = legacy.map((procedure, index) => normalizeCertificateTemplate({
+        id: `CERT-${String(index + 1).padStart(3, "0")}`,
+        name: procedure === "WS-WP-CRT-004" ? "Pressure Gauge" : procedure,
+        primaryProcedure: procedure,
+        type: /pressure|WS-WP-CRT-004/i.test(procedure) ? "pressure_gauge" : "other",
+      }, index));
+      persistCertificateTemplates(migrated);
+      return migrated;
+    }
+    const seeded = [defaultCertificateTemplate()];
+    persistCertificateTemplates(seeded);
+    return seeded;
+  };
+
+  const certificateTemplateFormHtml = (template = defaultCertificateTemplate(), mode = "add") => {
+    const normalized = normalizeCertificateTemplate(template);
+    const typeOptions = CERT_TYPE_OPTIONS
+      .map(([value, label]) => `<option value="${escapeHtml(value)}"${value === normalized.type ? " selected" : ""}>${escapeHtml(label)}</option>`)
+      .join("");
+    const requireCheck = (name, label) => `
+      <label class="certificate-template-check">
+        <input type="checkbox" name="${escapeHtml(name)}"${normalized.requires[name] ? " checked" : ""}>
+        <span>${escapeHtml(label)}</span>
+      </label>`;
+    return `<form data-calibrio-certificate-template-form="${escapeHtml(mode)}" data-certificate-id="${escapeHtml(normalized.id)}">
+      <div class="certificate-template-fields">
+        <label>Certificate Name<input name="name" value="${escapeHtml(normalized.name)}" required placeholder="Pressure Gauge - 30K Chart"></label>
+        <label>Primary Procedure ID<input name="primaryProcedure" value="${escapeHtml(normalized.primaryProcedure)}" required placeholder="WS-WP-CRT-004"></label>
+        <label class="certificate-template-span">Equivalent Procedures / Aliases<textarea name="aliases" placeholder="WS-WP-7.2, CRT-004">${escapeHtml(normalized.aliases.join(", "))}</textarea></label>
+        <label>Type<select name="type">${typeOptions}</select></label>
+        <label>Rev<input name="rev" value="${escapeHtml(normalized.rev)}" placeholder="002"></label>
+        <label>Range / Capacity Label<input name="unit" value="${escapeHtml(normalized.unit)}" placeholder="PSI"></label>
+        <label>Number of Test Points<input name="testPoints" type="number" min="1" step="1" value="${escapeHtml(normalized.testPoints)}"></label>
+        <label>Default Accuracy / Tolerance<input name="defaultAccuracy" value="${escapeHtml(normalized.defaultAccuracy)}" placeholder="&plusmn;1.0%"></label>
+        <label class="certificate-template-check"><input type="checkbox" name="includeZero"${normalized.includeZero ? " checked" : ""}><span>Include Zero Reading?</span></label>
+        <div class="certificate-template-requires">
+          ${requireCheck("asFoundInc", "Requires As Found Increasing")}
+          ${requireCheck("asFoundDec", "Requires As Found Decreasing")}
+          ${requireCheck("asLeftInc", "Requires As Left Increasing")}
+          ${requireCheck("asLeftDec", "Requires As Left Decreasing")}
+        </div>
+        <label class="certificate-template-span">Description<textarea name="description" placeholder="Template notes">${escapeHtml(normalized.description)}</textarea></label>
+      </div>
+      <footer>
+        <button type="submit" class="primary">Save Certificate</button>
+        <button type="button" class="ghost" data-calibrio-certificate-template-action="close">Cancel</button>
+      </footer>
+    </form>`;
+  };
+
+  const certificateTemplateDetailHtml = (template) => {
+    const requiredTables = [
+      ["asFoundInc", "As Found Increasing"],
+      ["asFoundDec", "As Found Decreasing"],
+      ["asLeftInc", "As Left Increasing"],
+      ["asLeftDec", "As Left Decreasing"],
+    ].map(([key, label]) => `<li>${template.requires?.[key] ? "Included" : "Not used"} - ${escapeHtml(label)}</li>`).join("");
+    return `<div class="certificate-template-detail-grid">
+      <p><b>Cert ID</b><span>${escapeHtml(template.id)}</span></p>
+      <p><b>Name</b><span>${escapeHtml(template.name)}</span></p>
+      <p><b>Primary Procedure</b><span>${escapeHtml(template.primaryProcedure)}</span></p>
+      <p><b>Aliases</b><span>${escapeHtml(template.aliases.join(", ") || "-")}</span></p>
+      <p><b>Type</b><span>${escapeHtml(displayTemplateType(template.type))}</span></p>
+      <p><b>Rev</b><span>${escapeHtml(template.rev || "-")}</span></p>
+      <p><b>Range Label</b><span>${escapeHtml(template.unit || "-")}</span></p>
+      <p><b>Points</b><span>${escapeHtml(template.includeZero ? `${template.testPoints} + zero` : template.testPoints)}</span></p>
+      <p><b>Default Accuracy</b><span>${escapeHtml(template.defaultAccuracy || "-")}</span></p>
+      <p><b>Point Formula</b><span>Range / ${escapeHtml(template.testPoints)} x i${template.includeZero ? " with zero row" : ""}</span></p>
+      <div class="certificate-template-span"><b>Required Tables</b><ul class="certificate-template-requirement-list">${requiredTables}</ul></div>
+      <div class="certificate-template-span"><b>Description</b><p class="certificate-template-description">${escapeHtml(template.description || "-")}</p></div>
+    </div>`;
+  };
+
+  const renderCertificateTemplateDrawer = () => {
+    document.querySelector("[data-calibrio-certificate-template-drawer]")?.remove();
+    if (!state.activeCertificateTemplateId) return;
+    const template = readCertificateTemplates().find((item) => item.id === state.activeCertificateTemplateId);
+    if (!template) return;
+    const mode = state.certificateTemplateDrawerMode === "edit" ? "edit" : "view";
+    const shade = document.createElement("div");
+    shade.className = "certificate-drawer-shade";
+    shade.dataset.calibrioCertificateTemplateDrawer = "1";
+    shade.innerHTML = `<aside class="certificate-template-drawer" role="dialog" aria-modal="true" aria-label="Certificate template details">
+      <header>
+        <div><small>CERTIFICATE TEMPLATE</small><h2>${escapeHtml(template.name)}</h2><p>${escapeHtml(template.primaryProcedure)}</p></div>
+        <button type="button" class="x" data-calibrio-certificate-template-action="close">X</button>
+      </header>
+      <div class="certificate-template-tabs">
+        <button type="button" class="${mode === "view" ? "active" : ""}" data-calibrio-certificate-template-action="drawer-view" data-certificate-id="${escapeHtml(template.id)}">View</button>
+        <button type="button" class="${mode === "edit" ? "active" : ""}" data-calibrio-certificate-template-action="drawer-edit" data-certificate-id="${escapeHtml(template.id)}">Edit</button>
+      </div>
+      <section>${mode === "edit" ? certificateTemplateFormHtml(template, "edit") : certificateTemplateDetailHtml(template)}</section>
+      <div class="certificate-template-drawer-actions">
+        <button type="button" class="primary" data-calibrio-certificate-template-action="use" data-certificate-id="${escapeHtml(template.id)}">Use This Certificate</button>
+        <button type="button" class="danger" data-calibrio-certificate-template-action="delete" data-certificate-id="${escapeHtml(template.id)}">Delete Certificate</button>
+      </div>
+    </aside>`;
+    document.body.appendChild(shade);
+  };
+
+  const renderCertificateTemplateModal = (template = defaultCertificateTemplate(), mode = "add") => {
+    document.querySelector("[data-calibrio-certificate-template-modal]")?.remove();
+    const shade = document.createElement("div");
+    shade.className = "certificate-drawer-shade";
+    shade.dataset.calibrioCertificateTemplateModal = "1";
+    shade.innerHTML = `<section class="certificate-template-drawer certificate-template-modal" role="dialog" aria-modal="true" aria-label="Add certificate template">
+      <header>
+        <div><small>CERTIFICATE SETUP</small><h2>${mode === "add" ? "Add Certificate" : "Edit Certificate"}</h2></div>
+        <button type="button" class="x" data-calibrio-certificate-template-action="close">X</button>
+      </header>
+      ${certificateTemplateFormHtml(template, mode)}
+    </section>`;
+    document.body.appendChild(shade);
+  };
+
+  const collectCertificateTemplateForm = (form) => ({
+    id: form.dataset.certificateId || "",
+    name: form.elements.name?.value?.trim() || "",
+    primaryProcedure: form.elements.primaryProcedure?.value?.trim() || "",
+    aliases: splitTemplateAliases(form.elements.aliases?.value || ""),
+    type: normalizeTemplateType(form.elements.type?.value),
+    rev: form.elements.rev?.value?.trim() || "",
+    unit: form.elements.unit?.value?.trim() || "PSI",
+    testPoints: normalizeTemplatePoints(form.elements.testPoints?.value, 5),
+    includeZero: form.elements.includeZero?.checked === true,
+    defaultAccuracy: form.elements.defaultAccuracy?.value?.trim() || "\u00b11.0%",
+    requires: {
+      asFoundInc: form.elements.asFoundInc?.checked === true,
+      asFoundDec: form.elements.asFoundDec?.checked === true,
+      asLeftInc: form.elements.asLeftInc?.checked === true,
+      asLeftDec: form.elements.asLeftDec?.checked === true,
+    },
+    description: form.elements.description?.value?.trim() || "",
+  });
+
+  const filteredCertificateTemplates = () => {
+    const query = state.certificateTemplateSearch.trim().toLowerCase();
+    const templates = readCertificateTemplates();
+    if (!query) return templates;
+    return templates.filter((template) => [
+      template.name,
+      template.primaryProcedure,
+      ...(template.aliases || []),
+    ].some((value) => String(value || "").toLowerCase().includes(query)));
+  };
+
+  let certificateTemplateNavTimer = 0;
+  let certificateTemplateNavAttempts = 0;
+  const runPendingCertificateTemplateNavigation = () => {
+    let target = "";
+    try {
+      target = sessionStorage.getItem(CERT_TEMPLATE_NAV_KEY) || "";
+    } catch {}
+    if (!target || certificateTemplateNavTimer) return;
+    const attemptNavigation = () => {
+      certificateTemplateNavTimer = 0;
+      let pendingTarget = "";
+      try {
+        pendingTarget = sessionStorage.getItem(CERT_TEMPLATE_NAV_KEY) || "";
+      } catch {}
+      if (!pendingTarget) return;
+      const pageText = document.body?.innerText || "";
+      if (pageText.includes(`Operations / ${pendingTarget}`)) {
+        try {
+          sessionStorage.removeItem(CERT_TEMPLATE_NAV_KEY);
+        } catch {}
+        certificateTemplateNavAttempts = 0;
+        return;
+      }
+      const navButton = [...document.querySelectorAll("button")]
+        .find((button) => button.textContent.trim().endsWith(pendingTarget));
+      if (navButton) navButton.click();
+      certificateTemplateNavAttempts += 1;
+      if (certificateTemplateNavAttempts < 10) {
+        certificateTemplateNavTimer = window.setTimeout(attemptNavigation, 500);
+      }
+    };
+    certificateTemplateNavTimer = window.setTimeout(attemptNavigation, 700);
+  };
+
+  let certificateTemplateFormTimer = 0;
+  let certificateTemplateFormAttempts = 0;
+  const setNativeFieldValue = (field, value) => {
+    if (!field) return;
+    const prototype = field.tagName === "SELECT" ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+    if (setter) setter.call(field, value);
+    else field.value = value;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
+  const applyPendingCertificateTemplateToCalibrationForm = () => {
+    let rawTemplate = "";
+    try {
+      rawTemplate = sessionStorage.getItem(CERT_TEMPLATE_FORM_KEY) || "";
+    } catch {}
+    if (!rawTemplate || certificateTemplateFormTimer) return;
+    const attemptApply = () => {
+      certificateTemplateFormTimer = 0;
+      let template = null;
+      try {
+        template = JSON.parse(sessionStorage.getItem(CERT_TEMPLATE_FORM_KEY) || "null");
+      } catch {}
+      if (!template) return;
+      const pageText = document.body?.innerText || "";
+      if (!pageText.includes("Operations / Calibrations")) return;
+      if (!pageText.includes("NEW CALIBRATION")) {
+        [...document.querySelectorAll("button")]
+          .find((button) => button.textContent.trim() === "+ Add Calibration")
+          ?.click();
+        certificateTemplateFormAttempts += 1;
+        if (certificateTemplateFormAttempts < 12) {
+          certificateTemplateFormTimer = window.setTimeout(attemptApply, 500);
+        }
+        return;
+      }
+      const procedure = String(template.primaryProcedure || "").trim();
+      const selects = [...document.querySelectorAll("select")];
+      const certificateSelect = selects.find((select) =>
+        [...select.options].some((option) => option.value === procedure || option.textContent.trim() === procedure)
+      );
+      if (certificateSelect && procedure) setNativeFieldValue(certificateSelect, procedure);
+      const unit = String(template.unit || "").trim();
+      const unitSelect = selects.find((select) =>
+        unit && [...select.options].some((option) => option.value === unit || option.textContent.trim() === unit)
+      );
+      if (unitSelect) setNativeFieldValue(unitSelect, unit);
+      const accuracyMatch = String(template.defaultAccuracy || "").match(/-?\d+(\.\d+)?/);
+      const accuracyInput = [...document.querySelectorAll("input")]
+        .find((input) => input.placeholder === "Example: 0.5");
+      if (accuracyInput && accuracyMatch) setNativeFieldValue(accuracyInput, accuracyMatch[0]);
+      try {
+        sessionStorage.removeItem(CERT_TEMPLATE_FORM_KEY);
+      } catch {}
+      certificateTemplateFormAttempts = 0;
+    };
+    certificateTemplateFormTimer = window.setTimeout(attemptApply, 500);
+  };
+
+  const renderCertificatesTemplateLibrary = (force = false) => {
+    const h1 = [...document.querySelectorAll("h1")].find((heading) => {
+      const title = heading.textContent.trim();
+      return title === "Certificate Library - Master list of certificate templates" || title === "Certificate Types";
+    });
+    const body = h1?.closest(".body");
+    if (!body) return;
+    if (body.dataset.calibrioCertificateLibrary === "1" && !force) return;
+    const templates = filteredCertificateTemplates();
+    const rows = templates.map((template) => `<tr class="certificate-template-row" data-calibrio-certificate-template-action="view" data-certificate-id="${escapeHtml(template.id)}">
+      <td>${escapeHtml(template.id)}</td>
+      <td>${escapeHtml(template.name)}</td>
+      <td>${escapeHtml(template.primaryProcedure)}</td>
+      <td>${escapeHtml((template.aliases || []).join(", ") || "-")}</td>
+      <td>${escapeHtml(displayTemplateType(template.type))}</td>
+      <td>${escapeHtml(template.includeZero ? `${template.testPoints} + zero` : template.testPoints)}</td>
+      <td>${escapeHtml(template.defaultAccuracy || "-")}</td>
+      <td>${escapeHtml(template.rev || "-")}</td>
+      <td><button type="button" class="secondary" data-calibrio-certificate-template-action="edit" data-certificate-id="${escapeHtml(template.id)}">Edit</button><button type="button" class="danger" data-calibrio-certificate-template-action="delete" data-certificate-id="${escapeHtml(template.id)}">Delete</button></td>
+    </tr>`).join("");
+    body.dataset.calibrioCertificateLibrary = "1";
+    body.innerHTML = `<div class="title">
+      <div><small>CERTIFICATE SETUP</small><h1>Certificate Library - Master list of certificate templates</h1><p>Manage template rules that drive calibration entry.</p></div>
+      <button type="button" class="primary" data-calibrio-certificate-template-action="add">+ Add Certificate</button>
+    </div>
+    <section class="panel certificate-template-library">
+      <div class="asset-list-toolbar"><div><b>${templates.length} certificate${templates.length === 1 ? "" : "s"}</b><p>Search by certificate name, primary procedure, or alias.</p></div><input data-calibrio-certificate-template-search value="${escapeHtml(state.certificateTemplateSearch)}" placeholder="Search by Name, Primary, Alias"></div>
+      <table><thead><tr>${["Cert ID", "Cert Name", "Primary Procedure", "Aliases", "Type", "Points", "Default Accuracy", "Rev", "Actions"].map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows || `<tr><td colspan="9" class="empty">No certificate templates found.</td></tr>`}</tbody></table>
+    </section>`;
+  };
+
+  const saveCertificateTemplateForm = (form) => {
+    const mode = form.dataset.calibrioCertificateTemplateForm;
+    const draft = collectCertificateTemplateForm(form);
+    if (!draft.name || !draft.primaryProcedure) {
+      window.alert("Certificate Name and Primary Procedure ID are required.");
+      return;
+    }
+    const templates = readCertificateTemplates();
+    const existingIndex = templates.findIndex((item) => item.id === draft.id);
+    const duplicate = templates.find((item) =>
+      item.id !== draft.id &&
+      item.primaryProcedure.toLowerCase() === draft.primaryProcedure.toLowerCase());
+    if (duplicate) {
+      window.alert(`Primary Procedure ID ${draft.primaryProcedure} is already used by ${duplicate.id}.`);
+      return;
+    }
+    const saved = normalizeCertificateTemplate({
+      ...draft,
+      id: mode === "add" || existingIndex === -1 ? nextCertificateTemplateId(templates) : draft.id,
+    }, existingIndex === -1 ? templates.length : existingIndex);
+    if (existingIndex === -1 || mode === "add") templates.push(saved);
+    else templates[existingIndex] = saved;
+    persistCertificateTemplates(templates);
+    state.activeCertificateTemplateId = saved.id;
+    state.certificateTemplateDrawerMode = "view";
+    document.querySelector("[data-calibrio-certificate-template-modal]")?.remove();
+    renderCertificatesTemplateLibrary(true);
+    renderCertificateTemplateDrawer();
+  };
+
+  const handleCertificateTemplateAction = (action, id) => {
+    if (action === "close") {
+      document.querySelector("[data-calibrio-certificate-template-modal]")?.remove();
+      document.querySelector("[data-calibrio-certificate-template-drawer]")?.remove();
+      state.activeCertificateTemplateId = "";
+      return;
+    }
+    if (action === "add") {
+      renderCertificateTemplateModal({ ...defaultCertificateTemplate(), id: nextCertificateTemplateId(readCertificateTemplates()) }, "add");
+      return;
+    }
+    if (action === "view" || action === "drawer-view") {
+      state.activeCertificateTemplateId = id;
+      state.certificateTemplateDrawerMode = "view";
+      renderCertificateTemplateDrawer();
+      return;
+    }
+    if (action === "edit" || action === "drawer-edit") {
+      state.activeCertificateTemplateId = id;
+      state.certificateTemplateDrawerMode = "edit";
+      renderCertificateTemplateDrawer();
+      return;
+    }
+    if (action === "delete") {
+      if (!window.confirm(`Delete certificate template ${id}?`)) return;
+      const templates = readCertificateTemplates().filter((item) => item.id !== id);
+      persistCertificateTemplates(templates.length ? templates : [defaultCertificateTemplate()]);
+      state.activeCertificateTemplateId = "";
+      renderCertificateTemplateDrawer();
+      renderCertificatesTemplateLibrary(true);
+      return;
+    }
+    if (action === "use") {
+      const template = readCertificateTemplates().find((item) => item.id === id);
+      if (!template) return;
+      try {
+        sessionStorage.setItem("calibrio-use-certificate-template", JSON.stringify(template));
+        sessionStorage.setItem(CERT_TEMPLATE_NAV_KEY, "Calibrations");
+        sessionStorage.setItem(CERT_TEMPLATE_FORM_KEY, JSON.stringify(template));
+      } catch {}
+      document.querySelector("[data-calibrio-certificate-template-modal]")?.remove();
+      document.querySelector("[data-calibrio-certificate-template-drawer]")?.remove();
+      window.location.assign(`${window.location.origin}${window.location.pathname}`);
+    }
+  };
+
+  document.addEventListener("submit", (event) => {
+    const form = event.target?.closest?.("[data-calibrio-certificate-template-form]");
+    if (!form) return;
+    event.preventDefault();
+    event.stopPropagation();
+    saveCertificateTemplateForm(form);
+  }, true);
+
+  document.addEventListener("input", (event) => {
+    const search = event.target?.closest?.("[data-calibrio-certificate-template-search]");
+    if (!search) return;
+    state.certificateTemplateSearch = search.value || "";
+    renderCertificatesTemplateLibrary(true);
+  }, true);
+
   const fixCertificateHtml = (html) => {
     if (typeof html !== "string" || !/(Decreasing|WINSHAW|certificate-brand|class="brand")/.test(html)) return html;
     try {
@@ -1802,6 +2273,9 @@
     completeVisibleCertificatePreviews();
     applyAssetRegisterSearch();
     applyCalibrationIdSearch();
+    runPendingCertificateTemplateNavigation();
+    applyPendingCertificateTemplateToCalibrationForm();
+    renderCertificatesTemplateLibrary();
   }))
     .observe(document.documentElement, { childList: true, subtree: true });
 
@@ -1818,6 +2292,9 @@
       completeVisibleCertificatePreviews();
       applyAssetRegisterSearch();
       applyCalibrationIdSearch();
+      runPendingCertificateTemplateNavigation();
+      applyPendingCertificateTemplateToCalibrationForm();
+      renderCertificatesTemplateLibrary();
     }, { once: true });
   } else {
     restoreActiveDraft();
@@ -1831,5 +2308,8 @@
     completeVisibleCertificatePreviews();
     applyAssetRegisterSearch();
     applyCalibrationIdSearch();
+    runPendingCertificateTemplateNavigation();
+    applyPendingCertificateTemplateToCalibrationForm();
+    renderCertificatesTemplateLibrary();
   }
 })();

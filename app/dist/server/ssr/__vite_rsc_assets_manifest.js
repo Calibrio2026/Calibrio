@@ -1,29 +1,29 @@
 export default {
-  "bootstrapScriptContent": "import(\"/assets/index-CalAssetHistory.js?v=labstandards-20260715-asset-lists-23\");(()=>{const s=document.createElement(\"script\");s.src=\"/assets/calibration-live-guard.js?v=labstandards-20260715-calinputs-liveguard-39\";s.defer=true;document.head.appendChild(s)})();import(\"/assets/calibration-live-guard.js?v=labstandards-20260715-calinputs-liveguard-39\")",
+  "bootstrapScriptContent": "import(\"/assets/index-CalAssetHistory.js?v=calibrio-cert-template-library-20260715-01\");(()=>{const s=document.createElement(\"script\");s.src=\"/assets/calibration-live-guard.js?v=labstandards-20260715-calinputs-liveguard-44\";s.defer=true;document.head.appendChild(s)})();import(\"/assets/calibration-live-guard.js?v=labstandards-20260715-calinputs-liveguard-44\")",
   "clientReferenceDeps": {
     "a9bbde40cf2d": {
       "js": [
         "/assets/error-DLFjDwOJ.js",
         "/assets/framework-CXnKph_e.js",
         "/assets/rolldown-runtime-S-ySWqyJ.js",
-        "/assets/index-CalAssetHistory.js?v=labstandards-20260715-asset-lists-23"
+        "/assets/index-CalAssetHistory.js?v=calibrio-cert-template-library-20260715-01"
       ],
       "css": []
     },
     "6efdf509a785": {
       "js": [
-        "/assets/page-CalAssetRegisterSearch.js?v=labstandards-20260715-asset-lists-23",
+        "/assets/page-CalAssetRegisterSearch.js?v=calibrio-cert-template-library-20260715-01",
         "/assets/rolldown-runtime-S-ySWqyJ.js",
         "/assets/framework-CXnKph_e.js",
-        "/assets/index-CalAssetHistory.js?v=labstandards-20260715-asset-lists-23"
+        "/assets/index-CalAssetHistory.js?v=calibrio-cert-template-library-20260715-01"
       ],
       "css": [
-        "/assets/page-BiT3rEqv.css?v=labstandards-20260715-asset-lists-23"
+        "/assets/page-BiT3rEqv.css?v=calibrio-cert-template-library-20260715-01"
       ]
     },
     "c7fa5cfea253": {
       "js": [
-        "/assets/index-CalAssetHistory.js?v=labstandards-20260715-asset-lists-23",
+        "/assets/index-CalAssetHistory.js?v=calibrio-cert-template-library-20260715-01",
         "/assets/rolldown-runtime-S-ySWqyJ.js",
         "/assets/framework-CXnKph_e.js"
       ],
@@ -33,14 +33,14 @@ export default {
       "js": [
         "/assets/layout-segment-context-J1Hne2wC.js",
         "/assets/rolldown-runtime-S-ySWqyJ.js",
-        "/assets/index-CalAssetHistory.js?v=labstandards-20260715-asset-lists-23",
+        "/assets/index-CalAssetHistory.js?v=calibrio-cert-template-library-20260715-01",
         "/assets/framework-CXnKph_e.js"
       ],
       "css": []
     },
     "5491e5eeb9e7": {
       "js": [
-        "/assets/index-CalAssetHistory.js?v=labstandards-20260715-asset-lists-23",
+        "/assets/index-CalAssetHistory.js?v=calibrio-cert-template-library-20260715-01",
         "/assets/rolldown-runtime-S-ySWqyJ.js",
         "/assets/framework-CXnKph_e.js"
       ],

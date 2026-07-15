@@ -6021,7 +6021,7 @@ function Home() {
 						items,
 						add,
 						go: changePage
-					}) : page === "Customers" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CustomerDirectory, {}) : page === "Certificates" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CertificateTypes, {}) : page === "Calibrations" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CalibrationWorkspace, {
+					}) : page === "Customers" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CustomerDirectory, {}) : page === "Certificates" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CertificateTypes, { go: changePage }) : page === "Calibrations" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CalibrationWorkspace, {
 						assets: items,
 						onAssetsChange: persistAssets
 					}) : page === "Evaluations" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EvaluationWorkspace, { userName: u.name }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(List, {
@@ -7333,6 +7333,25 @@ function CalibrationWorkspace({ assets, onAssetsChange }) {
 				const parsed = JSON.parse(savedTypes);
 				if (Array.isArray(parsed)) setCertificateTypes([...new Set(["WS-WP-CRT-004", ...parsed.filter((item) => typeof item === "string")])]);
 			}
+			const pendingTemplateRaw = sessionStorage.getItem("calibrio-use-certificate-template");
+			if (pendingTemplateRaw) {
+				sessionStorage.removeItem("calibrio-use-certificate-template");
+				try {
+					const pendingTemplate = JSON.parse(pendingTemplateRaw);
+					const pendingProcedure = String(pendingTemplate?.primaryProcedure || "").trim();
+					if (pendingProcedure) {
+						const accuracyMatch = String(pendingTemplate?.defaultAccuracy || "").match(/-?\d+(\.\d+)?/);
+						setCertificateTypes((current) => [...new Set([pendingProcedure, ...current])]);
+						setForm((current) => ({
+							...current,
+							certificateType: pendingProcedure,
+							unit: pendingTemplate?.unit || current.unit,
+							maximum: accuracyMatch ? accuracyMatch[0] : current.maximum
+						}));
+						setEditing(true);
+					}
+				} catch {}
+			}
 			const pendingCalibrationId = sessionStorage.getItem("calibrio-open-calibration-id"), pendingPreviewId = sessionStorage.getItem("calibrio-preview-calibration-id"), pendingPrintId = sessionStorage.getItem("calibrio-print-calibration-id"), pendingId = pendingPrintId || pendingPreviewId || pendingCalibrationId;
 			if (pendingId && savedRecords) {
 				const parsed = JSON.parse(savedRecords);
@@ -8365,24 +8384,66 @@ function Editor({ asset, close, save, assets = [] }) {
 		})]
 	});
 }
-function CertificateTypes() {
+function CertificateTypes({ go }) {
 	const certificateLibraryKey = "calibrio-certificates";
 	const legacyCertificateTypesKey = "calibrio-certificate-types";
+	const pendingTemplateKey = "calibrio-use-certificate-template";
 	const defaultProcedure = "WS-WP-CRT-004";
-	const typeOptions = ["Pressure", "Torque", "Electrical", "Dimensional", "Temperature", "Flow", "Mass", "Force", "Other"];
+	const defaultRequires = {
+		asFoundInc: true,
+		asFoundDec: true,
+		asLeftInc: true,
+		asLeftDec: true
+	};
+	const typeOptions = [
+		{ value: "pressure_gauge", label: "Pressure Gauge" },
+		{ value: "pressure_transducer", label: "Pressure Transducer" },
+		{ value: "torque", label: "Torque" },
+		{ value: "electrical", label: "Electrical" },
+		{ value: "dimensional", label: "Dimensional" },
+		{ value: "temperature", label: "Temperature" },
+		{ value: "flow", label: "Flow" },
+		{ value: "mass", label: "Mass" },
+		{ value: "force", label: "Force" },
+		{ value: "other", label: "Other" }
+	];
+	const requireOptions = [
+		{ key: "asFoundInc", label: "Requires As Found Increasing" },
+		{ key: "asFoundDec", label: "Requires As Found Decreasing" },
+		{ key: "asLeftInc", label: "Requires As Left Increasing" },
+		{ key: "asLeftDec", label: "Requires As Left Decreasing" }
+	];
 	const blankTemplate = () => ({
 		id: "",
 		name: "",
 		primaryProcedure: "",
 		aliasesText: "",
-		type: "pressure",
+		type: "pressure_gauge",
 		rev: "",
+		unit: "PSI",
+		testPoints: 5,
+		includeZero: false,
+		defaultAccuracy: "\u00B11.0%",
+		requires: { ...defaultRequires },
 		description: ""
 	});
 	const splitAliases = (value) => [...new Set(String(value || "").split(",").map((item) => item.trim()).filter(Boolean))];
-	const titleCase = (value) => {
-		const text = String(value || "").trim();
-		return text ? text.charAt(0).toUpperCase() + text.slice(1).toLowerCase() : "";
+	const normalizeType = (value) => {
+		const clean = String(value || "pressure_gauge").trim().toLowerCase().replace(/[\s-]+/g, "_");
+		if (clean === "pressure" || clean === "pressure_gauge_certificate") return "pressure_gauge";
+		return typeOptions.some((option) => option.value === clean) ? clean : "other";
+	};
+	const displayType = (value) => typeOptions.find((option) => option.value === normalizeType(value))?.label || "Other";
+	const normalizeRequires = (requires = {}) => ({
+		asFoundInc: requires.asFoundInc !== false,
+		asFoundDec: requires.asFoundDec !== false,
+		asLeftInc: requires.asLeftInc !== false,
+		asLeftDec: requires.asLeftDec !== false
+	});
+	const normalizePointCount = (value, fallback = 5) => {
+		const number = Number(value);
+		if (!Number.isFinite(number)) return fallback;
+		return Math.max(1, Math.min(25, Math.round(number)));
 	};
 	const normalizeTemplate = (template, index = 0) => {
 		const primary = String(template?.primaryProcedure || template?.procedure || "").trim();
@@ -8390,15 +8451,29 @@ function CertificateTypes() {
 		const aliases = [...new Set(rawAliases.map((item) => String(item || "").trim()).filter(Boolean).filter((item) => item.toLowerCase() !== primary.toLowerCase()))];
 		const idText = String(template?.id || "").trim();
 		const id = /^CERT-\d+$/i.test(idText) ? idText.toUpperCase() : `CERT-${String(index + 1).padStart(3, "0")}`;
-		const name = String(template?.name || template?.certificateName || primary || "Certificate Template").trim();
+		const type = normalizeType(template?.type);
+		const isDefaultPressure = primary === defaultProcedure || type === "pressure_gauge";
 		return {
 			id,
-			name,
+			name: String(template?.name || template?.certificateName || primary || "Certificate Template").trim(),
 			primaryProcedure: primary,
 			aliases,
-			type: String(template?.type || "pressure").trim().toLowerCase(),
+			type,
 			rev: String(template?.rev || "").trim(),
+			unit: String(template?.unit || template?.rangeLabel || (isDefaultPressure ? "PSI" : "")).trim(),
+			testPoints: normalizePointCount(template?.testPoints ?? template?.points, isDefaultPressure ? 5 : 1),
+			includeZero: template?.includeZero === true,
+			defaultAccuracy: String(template?.defaultAccuracy || template?.accuracy || (isDefaultPressure ? "\u00B11.0%" : "")).trim(),
+			requires: normalizeRequires(template?.requires),
 			description: String(template?.description || "").trim()
+		};
+	};
+	const templateToForm = (template) => {
+		const normalized = normalizeTemplate(template);
+		return {
+			...normalized,
+			aliasesText: normalized.aliases.join(", "),
+			requires: { ...normalized.requires }
 		};
 	};
 	const templatesFromLegacyTypes = (items) => {
@@ -8406,11 +8481,16 @@ function CertificateTypes() {
 		const uniqueProcedures = strings.length ? [...new Set(strings)] : [defaultProcedure];
 		return uniqueProcedures.map((procedure, index) => normalizeTemplate({
 			id: `CERT-${String(index + 1).padStart(3, "0")}`,
-			name: procedure === defaultProcedure ? "Pressure - 30K Chart Recorder" : procedure,
+			name: procedure === defaultProcedure ? "Pressure Gauge - 30K Chart" : procedure,
 			primaryProcedure: procedure,
 			aliases: procedure === defaultProcedure ? ["WS-WP-7.2", "CRT-004", "WS-WP-CRT-004_rev_002"] : [],
-			type: procedure === defaultProcedure ? "pressure" : "other",
+			type: procedure === defaultProcedure ? "pressure_gauge" : "other",
 			rev: procedure === defaultProcedure ? "002" : "",
+			unit: procedure === defaultProcedure ? "PSI" : "",
+			testPoints: 5,
+			includeZero: false,
+			defaultAccuracy: "\u00B11.0%",
+			requires: defaultRequires,
 			description: ""
 		}, index));
 	};
@@ -8422,7 +8502,8 @@ function CertificateTypes() {
 		return `CERT-${String(max + 1).padStart(3, "0")}`;
 	};
 	const legacyProcedureList = (records) => [...new Set(records.flatMap((record) => [record.primaryProcedure, ...(Array.isArray(record.aliases) ? record.aliases : [])]).map((item) => String(item || "").trim()).filter(Boolean))];
-	const [templates, setTemplates] = (0, import_react.useState)([]), [query, setQuery] = (0, import_react.useState)(""), [showModal, setShowModal] = (0, import_react.useState)(false), [editingId, setEditingId] = (0, import_react.useState)(null), [form, setForm] = (0, import_react.useState)(blankTemplate());
+	const formatPoints = (template) => template.includeZero ? `${template.testPoints} + zero` : String(template.testPoints);
+	const [templates, setTemplates] = (0, import_react.useState)([]), [query, setQuery] = (0, import_react.useState)(""), [showModal, setShowModal] = (0, import_react.useState)(false), [editingId, setEditingId] = (0, import_react.useState)(null), [form, setForm] = (0, import_react.useState)(blankTemplate()), [drawerTemplateId, setDrawerTemplateId] = (0, import_react.useState)(null), [drawerTab, setDrawerTab] = (0, import_react.useState)("view");
 	(0, import_react.useEffect)(() => {
 		try {
 			const savedLibrary = localStorage.getItem(certificateLibraryKey);
@@ -8455,27 +8536,41 @@ function CertificateTypes() {
 		localStorage.setItem(certificateLibraryKey, JSON.stringify(normalized));
 		localStorage.setItem(legacyCertificateTypesKey, JSON.stringify(legacyProcedureList(normalized)));
 	};
-	const updateForm = (key, value) => setForm((current) => ({
+	const updateForm = (key, value) => setForm((current) => {
+		const next = {
+			...current,
+			[key]: value
+		};
+		if (key === "type" && value === "pressure_gauge") {
+			next.testPoints = normalizePointCount(current.testPoints, 5) || 5;
+			next.unit = current.unit || "PSI";
+			next.defaultAccuracy = current.defaultAccuracy || "\u00B11.0%";
+		}
+		return next;
+	});
+	const updateRequires = (key, value) => setForm((current) => ({
 		...current,
-		[key]: value
+		requires: {
+			...normalizeRequires(current.requires),
+			[key]: value
+		}
 	}));
 	const openAdd = () => {
 		setEditingId(null);
 		setForm(blankTemplate());
 		setShowModal(true);
 	};
-	const openEdit = (template) => {
-		setEditingId(template.id);
-		setForm({
-			...template,
-			aliasesText: Array.isArray(template.aliases) ? template.aliases.join(", ") : "",
-			type: template.type || "pressure"
-		});
-		setShowModal(true);
+	const openDrawer = (template, tab = "view") => {
+		setDrawerTemplateId(template.id);
+		setDrawerTab(tab);
+		setEditingId(tab === "edit" ? template.id : null);
+		setForm(templateToForm(template));
+		setShowModal(false);
 	};
+	const selectedTemplate = drawerTemplateId ? templates.find((template) => template.id === drawerTemplateId) || null : null;
 	const saveTemplate = (event) => {
 		event.preventDefault();
-		const aliases = splitAliases(form.aliasesText || form.aliases);
+		const aliases = splitAliases(form.aliasesText);
 		const draft = normalizeTemplate({
 			...form,
 			id: editingId || nextCertificateId(templates),
@@ -8483,24 +8578,145 @@ function CertificateTypes() {
 		}, templates.length);
 		if (!draft.name || !draft.primaryProcedure || !draft.type) return;
 		const duplicate = templates.find((template) => template.id !== editingId && template.primaryProcedure.toLowerCase() === draft.primaryProcedure.toLowerCase());
-		if (duplicate && editingId) {
+		if (duplicate) {
 			window.alert(`Primary Procedure ID ${draft.primaryProcedure} is already used by ${duplicate.id}.`);
 			return;
 		}
-		const record = duplicate && !editingId ? {
-			...draft,
-			id: duplicate.id
-		} : draft;
-		const next = editingId || duplicate ? templates.map((template) => template.id === record.id ? record : template) : [...templates, record];
+		const record = draft;
+		const next = editingId ? templates.map((template) => template.id === record.id ? record : template) : [...templates, record];
 		persistTemplates(next);
-		setShowModal(false);
+		if (editingId && !showModal) {
+			setDrawerTemplateId(record.id);
+			setDrawerTab("view");
+			setForm(templateToForm(record));
+		} else {
+			setShowModal(false);
+			setForm(blankTemplate());
+		}
 		setEditingId(null);
-		setForm(blankTemplate());
 	};
 	const deleteTemplate = (template) => {
 		if (!window.confirm(`Delete certificate template ${template.id}?`)) return;
 		persistTemplates(templates.filter((item) => item.id !== template.id));
+		if (drawerTemplateId === template.id) {
+			setDrawerTemplateId(null);
+			setEditingId(null);
+		}
 	};
+	const useTemplate = (template) => {
+		const normalized = normalizeTemplate(template);
+		sessionStorage.setItem(pendingTemplateKey, JSON.stringify(normalized));
+		localStorage.setItem(legacyCertificateTypesKey, JSON.stringify(legacyProcedureList(templates)));
+		if (typeof go === "function") go("Calibrations");
+	};
+	const cancelDrawerEdit = () => {
+		setDrawerTab("view");
+		setEditingId(null);
+		if (selectedTemplate) setForm(templateToForm(selectedTemplate));
+	};
+	const renderFormFields = () => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+		className: "asset-form-fields certificate-library-fields certificate-template-fields",
+		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Certificate Name", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+				value: form.name,
+				onChange: (event) => updateForm("name", event.target.value),
+				placeholder: "Pressure Gauge - 30K Chart",
+				required: true
+			})] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Primary Procedure ID", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+				value: form.primaryProcedure,
+				onChange: (event) => updateForm("primaryProcedure", event.target.value),
+				placeholder: "WS-WP-CRT-004",
+				required: true
+			})] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Type", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", {
+				value: form.type,
+				onChange: (event) => updateForm("type", event.target.value),
+				required: true,
+				children: typeOptions.map((type) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+					value: type.value,
+					children: type.label
+				}, type.value))
+			})] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Rev", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+				value: form.rev,
+				onChange: (event) => updateForm("rev", event.target.value),
+				placeholder: "002"
+			})] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Range / Capacity Label", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+				value: form.unit,
+				onChange: (event) => updateForm("unit", event.target.value),
+				placeholder: "PSI"
+			})] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Number of Test Points", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+				type: "number",
+				min: "1",
+				max: "25",
+				value: form.testPoints,
+				onChange: (event) => updateForm("testPoints", event.target.value),
+				required: true
+			})] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Default Accuracy / Tolerance", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+				value: form.defaultAccuracy,
+				onChange: (event) => updateForm("defaultAccuracy", event.target.value),
+				placeholder: "\u00B11.0%"
+			})] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
+				className: "certificate-template-check",
+				children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+					type: "checkbox",
+					checked: form.includeZero === true,
+					onChange: (event) => updateForm("includeZero", event.target.checked)
+				}), "Include Zero Reading?"] })
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+				className: "certificate-library-wide",
+				children: ["Equivalent Procedures / Aliases", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", {
+					value: form.aliasesText,
+					onChange: (event) => updateForm("aliasesText", event.target.value),
+					placeholder: "WS-WP-7.2, CRT-004, WS-WP-CRT-004_rev_002"
+				})]
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("fieldset", {
+				className: "certificate-library-wide certificate-template-requires",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("legend", { children: "Required Calibration Tables" }),
+					requireOptions.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+						type: "checkbox",
+						checked: normalizeRequires(form.requires)[option.key],
+						onChange: (event) => updateRequires(option.key, event.target.checked)
+					}), option.label] }) }, option.key))
+				]
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+				className: "certificate-library-wide",
+				children: ["Description", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", {
+					value: form.description,
+					onChange: (event) => updateForm("description", event.target.value),
+					placeholder: "Optional notes about this template"
+				})]
+			})
+		]
+	});
+	const renderDetail = (template) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "certificate-template-detail-grid", children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Cert ID" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: template.id })] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Cert Name" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: template.name })] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Primary Procedure" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: template.primaryProcedure || "-" })] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Aliases" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: template.aliases?.length ? template.aliases.join(", ") : "-" })] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Type" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: displayType(template.type) })] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Rev" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: template.rev || "-" })] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Range Label" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: template.unit || "-" })] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Points" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: formatPoints(template) })] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Default Accuracy" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: template.defaultAccuracy || "-" })] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Point Formula" }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: ["Range / ", template.testPoints, " x i", template.includeZero ? " with zero row" : ""] })] })
+		] }),
+		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "certificate-template-requirement-list", children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Required tables" }),
+			requireOptions.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: normalizeRequires(template.requires)[option.key] ? "is-on" : "is-off", children: [normalizeRequires(template.requires)[option.key] ? "Required" : "Not required", " - ", option.label.replace("Requires ", "")] }, option.key))
+		] }),
+		template.description && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "certificate-template-description", children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Description" }), template.description] })
+	] });
 	const searchText = query.trim().toLowerCase();
 	const filteredTemplates = searchText ? templates.filter((template) => [template.name, template.primaryProcedure, ...(Array.isArray(template.aliases) ? template.aliases : [])].some((value) => String(value || "").toLowerCase().includes(searchText))) : templates;
 	const modal = showModal && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
@@ -8510,172 +8726,68 @@ function CertificateTypes() {
 			className: "asset-modal certificate-library-modal",
 			onMouseDown: (event) => event.stopPropagation(),
 			children: [
-				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-					className: "x",
-					onClick: () => setShowModal(false),
-					children: "x"
-				}),
-				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: "CERTIFICATE LIBRARY" }),
-				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: editingId ? "Edit certificate template" : "Add certificate template" }),
-				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-					className: "form-note",
-					children: "Certificate templates define procedure names and aliases. Calibration data entry remains on the Calibrations page."
-				}),
-				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", {
-					onSubmit: saveTemplate,
-					children: [
-						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "asset-form-fields certificate-library-fields",
-							children: [
-								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Certificate Name", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-									value: form.name,
-									onChange: (event) => updateForm("name", event.target.value),
-									placeholder: "Pressure - 30K Chart Recorder",
-									required: true
-								})] }),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Primary Procedure ID", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-									value: form.primaryProcedure,
-									onChange: (event) => updateForm("primaryProcedure", event.target.value),
-									placeholder: "WS-WP-CRT-004",
-									required: true
-								})] }),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Type", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", {
-									value: form.type,
-									onChange: (event) => updateForm("type", event.target.value),
-									required: true,
-									children: typeOptions.map((type) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
-										value: type.toLowerCase(),
-										children: type
-									}, type))
-								})] }),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Rev", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-									value: form.rev,
-									onChange: (event) => updateForm("rev", event.target.value),
-									placeholder: "002"
-								})] }),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
-									className: "certificate-library-wide",
-									children: ["Equivalent Procedures / Aliases", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", {
-										value: form.aliasesText,
-										onChange: (event) => updateForm("aliasesText", event.target.value),
-										placeholder: "WS-WP-7.2, CRT-004, WS-WP-CRT-004_rev_002"
-									})]
-								}),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
-									className: "certificate-library-wide",
-									children: ["Description", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", {
-										value: form.description,
-										onChange: (event) => updateForm("description", event.target.value),
-										placeholder: "Optional notes about this template"
-									})]
-								})
-							]
-						}),
-						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-							className: "primary full",
-							children: "Save Certificate"
-						})
-					]
-				})
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "x", onClick: () => setShowModal(false), children: "x" }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: "CERTIFICATE TEMPLATE" }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Add certificate template" }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "form-note", children: "Define the certificate rules once. Calibration entry uses these rules when this procedure is selected." }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", { onSubmit: saveTemplate, children: [renderFormFields(), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary full", children: "Save Certificate" })] })
+			]
+		})
+	});
+	const drawer = selectedTemplate && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+		className: "certificate-drawer-shade",
+		onMouseDown: () => setDrawerTemplateId(null),
+		children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("aside", {
+			className: "certificate-template-drawer",
+			onMouseDown: (event) => event.stopPropagation(),
+			children: [
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "x", onClick: () => setDrawerTemplateId(null), children: "x" }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: "CERTIFICATE TEMPLATE" }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: selectedTemplate.name }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "form-note", children: selectedTemplate.primaryProcedure }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "certificate-template-tabs", children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: drawerTab === "view" ? "on" : "", onClick: () => {
+						setDrawerTab("view");
+						setEditingId(null);
+					}, children: "View" }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: drawerTab === "edit" ? "on" : "", onClick: () => openDrawer(selectedTemplate, "edit"), children: "Edit" })
+				] }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "certificate-template-drawer-actions", children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "primary", onClick: () => useTemplate(selectedTemplate), children: "Use This Certificate" }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "delete-certificate", onClick: () => deleteTemplate(selectedTemplate), children: "Delete Certificate" })
+				] }),
+				drawerTab === "edit" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", { onSubmit: saveTemplate, children: [renderFormFields(), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "certificate-template-edit-actions", children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", children: "Save" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "secondary", onClick: cancelDrawerEdit, children: "Cancel" })] })] }) : renderDetail(selectedTemplate)
 			]
 		})
 	});
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-			className: "title",
-			children: [
-				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: "CERTIFICATE SETUP" }),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h1", { children: "Certificate Library - Master list of certificate templates" }),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Manage canonical procedures, equivalent procedure names, and certificate revisions." })
-				] }),
-				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-					className: "primary",
-					onClick: openAdd,
-					children: "+ Add Certificate"
-				})
-			]
-		}),
-		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
-			className: "panel certificate-library-search",
-			children: [
-				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Search by Certificate Name, Procedure ID, Alias", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-					value: query,
-					onChange: (event) => setQuery(event.target.value),
-					placeholder: "Search certificate library"
-				})] }),
-				query && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-					className: "secondary",
-					type: "button",
-					onClick: () => setQuery(""),
-					children: "Clear"
-				})
-			]
-		}),
-		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
-			className: "panel asset-panel certificate-library-panel",
-			children: [
-				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "asset-toolbar",
-					children: [
-						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("b", { children: [filteredTemplates.length, filteredTemplates.length === 1 ? " certificate" : " certificates"] }),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Templates are searched by name, primary procedure, and aliases." })
-						] }),
-						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Library management only" })
-					]
-				}),
-				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "table",
-					children: [
-						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("table", {
-							className: "asset-table certificate-library-table",
-							children: [
-								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: [
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Certificate ID" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Certificate Name" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Primary Procedure ID" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Equivalent Procedures / Aliases" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Type" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Rev" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Actions" })
-								] }) }),
-								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", { children: filteredTemplates.length ? filteredTemplates.map((template) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: [
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: template.id }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: template.name }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: template.primaryProcedure || "-" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: template.aliases?.length ? template.aliases.join(", ") : "-" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: titleCase(template.type) || "-" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: template.rev || "-" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-										className: "certificate-library-actions",
-										children: [
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-												type: "button",
-												className: "edit-certificate",
-												onClick: () => openEdit(template),
-												children: "Edit"
-											}),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-												type: "button",
-												className: "delete-certificate",
-												onClick: () => deleteTemplate(template),
-												children: "Delete"
-											})
-										]
-									}) })
-								] }, template.id)) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tr", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
-									colSpan: 7,
-									className: "muted certificate-library-empty",
-									children: "No certificate templates match this search."
-								}) }) })
-							]
-						})
-					]
-				})
-			]
-		}),
-		modal
+		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "title", children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: "CERTIFICATE SETUP" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h1", { children: "Certificate Library - Master list of certificate templates" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Manage template rules that drive calibration entry." })] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: openAdd, children: "+ Add Certificate" })] }),
+		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "panel certificate-library-search", children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Search by Name, Primary, Alias", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: query, onChange: (event) => setQuery(event.target.value), placeholder: "Search certificate library" })] }), query && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "secondary", type: "button", onClick: () => setQuery(""), children: "Clear" })] }),
+		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "panel asset-panel certificate-library-panel", children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "asset-toolbar", children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("b", { children: [filteredTemplates.length, filteredTemplates.length === 1 ? " certificate" : " certificates"] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Click a row to view or edit the template rules." })] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Template definitions only" })] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "table", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("table", { className: "asset-table certificate-library-table", children: [
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: ["Cert ID", "Cert Name", "Primary Procedure", "Aliases", "Type", "Points", "Default Accuracy", "Rev", "Actions"].map((header) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: header }, header)) }) }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", { children: filteredTemplates.length ? filteredTemplates.map((template) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { className: "certificate-template-row", onClick: () => openDrawer(template, "view"), children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: template.id }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: template.name }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: template.primaryProcedure || "-" }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: template.aliases?.length ? template.aliases.join(", ") : "-" }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: displayType(template.type) }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: formatPoints(template) }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: template.defaultAccuracy || "-" }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: template.rev || "-" }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "certificate-library-actions", children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "edit-certificate", onClick: (event) => {
+						event.stopPropagation();
+						openDrawer(template, "edit");
+					}, children: "Edit" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "delete-certificate", onClick: (event) => {
+						event.stopPropagation();
+						deleteTemplate(template);
+					}, children: "Delete" })] }) })
+				] }, template.id)) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tr", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { colSpan: 9, className: "muted certificate-library-empty", children: "No certificate templates match this search." }) }) })
+			] }) })
+		] }),
+		modal,
+		drawer
 	] });
 }
 function Metric({ label, value }) {
