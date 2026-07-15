@@ -1,4 +1,4 @@
-globalThis.__VINEXT_LAZY_CHUNKS__ = ["assets/error-DLFjDwOJ.js","assets/page-CalAssetHistory.js","assets/layout-segment-context-J1Hne2wC.js"];
+globalThis.__VINEXT_LAZY_CHUNKS__ = ["assets/error-DLFjDwOJ.js","assets/page-CalAssetRegisterSearch.js","assets/layout-segment-context-J1Hne2wC.js"];
 import * as __viteRscAsyncHooks from "node:async_hooks";
 import { AsyncLocalStorage as AsyncLocalStorage$1 } from "node:async_hooks";
 import assetsManifest from "./__vite_rsc_assets_manifest.js";

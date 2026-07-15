@@ -1497,6 +1497,155 @@
     ensurePassFailFallback();
   };
 
+  const ASSET_REGISTER_PAGE_TYPES = {
+    "Customer Assets": "Customer",
+    "Rentals": "Rental",
+    "Lab Standards": "Lab Standard",
+  };
+
+  const normalizeAssetSearchText = (value) => String(value || "").trim().toLowerCase();
+
+  const currentAssetRegisterPage = () => {
+    const heading = document.querySelector(".body h1, section.main h1");
+    const title = heading?.textContent?.trim() || "";
+    return Object.prototype.hasOwnProperty.call(ASSET_REGISTER_PAGE_TYPES, title) ? title : "";
+  };
+
+  const uniqueAssetValues = (assets, key) => [...new Set(assets
+    .map((asset) => String(asset?.[key] || "").trim())
+    .filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+  const assetRegisterSearchHtml = (pageTitle) => {
+    const type = ASSET_REGISTER_PAGE_TYPES[pageTitle];
+    const assets = loadAssets().filter((asset) => asset.classification === type);
+    const customers = uniqueAssetValues(loadCustomers(), "name");
+    const makes = uniqueAssetValues(assets, "make");
+    const models = uniqueAssetValues(assets, "model");
+    const certs = uniqueAssetValues(assets, "certNumber");
+    const id = pageTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const options = (values) => values.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("");
+    return `<section class="panel asset-advanced-search" data-calibrio-asset-search="${escapeHtml(pageTitle)}">
+      <div class="asset-advanced-search-heading"><b>Advanced Search</b><span>Partial match, case-insensitive. Filled fields are combined.</span></div>
+      <div class="asset-advanced-search-grid">
+        <label>Asset ID<input data-calibrio-asset-search-field="id" placeholder="WS-1000002"></label>
+        <label>Serial Number<input data-calibrio-asset-search-field="serialNumber" placeholder="Serial number"></label>
+        <label>Customer<select data-calibrio-asset-search-field="customer"><option value="">All customers</option>${customers.map((customer) => `<option value="${escapeHtml(customer)}">${escapeHtml(customer)}</option>`).join("")}</select></label>
+        <label>Make<input data-calibrio-asset-search-field="make" list="${id}-make-options" placeholder="Make"></label>
+        <label>Model<input data-calibrio-asset-search-field="model" list="${id}-model-options" placeholder="Model"></label>
+        <label>Calibration Cert #<input data-calibrio-asset-search-field="certNumber" list="${id}-cert-options" placeholder="CAL-000001"></label>
+      </div>
+      <div class="asset-advanced-search-actions"><button type="button" class="secondary" data-calibrio-clear-asset-search>Clear search</button><span data-calibrio-asset-search-count>${assets.length} of ${assets.length} assets shown</span></div>
+      <datalist id="${id}-make-options">${options(makes)}</datalist>
+      <datalist id="${id}-model-options">${options(models)}</datalist>
+      <datalist id="${id}-cert-options">${options(certs)}</datalist>
+    </section>`;
+  };
+
+  const applyAssetRegisterSearch = () => {
+    const pageTitle = currentAssetRegisterPage();
+    const globalSearch = document.querySelector('input[placeholder="Search any asset information"]');
+    if (!pageTitle) {
+      if (globalSearch?.closest("label")?.dataset.calibrioHiddenForAssetRegister) {
+        globalSearch.closest("label").style.display = "";
+        delete globalSearch.closest("label").dataset.calibrioHiddenForAssetRegister;
+      }
+      return;
+    }
+    if (globalSearch?.closest("label")) {
+      const label = globalSearch.closest("label");
+      label.dataset.calibrioHiddenForAssetRegister = "1";
+      label.style.display = "none";
+    }
+
+    const title = document.querySelector(".body h1, section.main h1");
+    const subtitle = title?.closest(".title")?.querySelector("p")
+      || title?.parentElement?.querySelector("p")
+      || title?.nextElementSibling;
+    if (subtitle && (pageTitle === "Customer Assets" || pageTitle === "Rentals") && subtitle.textContent.trim() !== "Master list of every asset ever added.") {
+      subtitle.textContent = "Master list of every asset ever added.";
+    }
+    for (const panel of document.querySelectorAll(".lab-summary-panel, .panel")) {
+      if (pageTitle === "Lab Standards" && panel !== document.querySelector(".asset-panel") && /Calibration Control Summary/.test(panel.textContent || "")) {
+        if (panel.style.display !== "none") panel.style.display = "none";
+      }
+    }
+
+    const assetPanel = document.querySelector(".asset-panel");
+    if (!assetPanel) return;
+    let searchPanel = document.querySelector(".asset-advanced-search[data-calibrio-asset-search]");
+    if (searchPanel && searchPanel.dataset.calibrioAssetSearch !== pageTitle) {
+      searchPanel.remove();
+      searchPanel = null;
+    }
+    if (!searchPanel) {
+      assetPanel.insertAdjacentHTML("beforebegin", assetRegisterSearchHtml(pageTitle));
+      searchPanel = document.querySelector(".asset-advanced-search[data-calibrio-asset-search]");
+    }
+
+    const table = assetPanel.querySelector(".asset-table table");
+    const headerCells = [...(table?.querySelectorAll("thead th") || [])];
+    const removeIndexes = headerCells
+      .map((cell, index) => ({ index, text: cell.textContent.trim() }))
+      .filter(({ text }) => text === "Calibration Status" || text === "Use Status")
+      .map(({ index }) => index)
+      .sort((a, b) => b - a);
+    for (const index of removeIndexes) {
+      for (const row of table.querySelectorAll("tr")) {
+        if (row.cells[index]) row.deleteCell(index);
+      }
+    }
+    const normalizedHeaderCells = [...(table?.querySelectorAll("thead th") || [])];
+    if (normalizedHeaderCells.length && normalizedHeaderCells[normalizedHeaderCells.length - 1].textContent.trim() !== "Edit") normalizedHeaderCells[normalizedHeaderCells.length - 1].textContent = "Edit";
+
+    const rows = [...(table?.querySelectorAll("tbody tr") || [])].filter((row) => row.cells.length >= 11);
+    const values = {};
+    for (const input of searchPanel.querySelectorAll("[data-calibrio-asset-search-field]")) {
+      values[input.dataset.calibrioAssetSearchField] = normalizeAssetSearchText(input.value);
+    }
+    const indexes = {
+      id: 0,
+      serialNumber: 1,
+      customer: 2,
+      make: 3,
+      model: 4,
+      certNumber: 7,
+    };
+    let visible = 0;
+    for (const row of rows) {
+      const matches = Object.entries(indexes).every(([field, index]) => {
+        const needle = values[field];
+        return !needle || normalizeAssetSearchText(row.cells[index]?.textContent).includes(needle);
+      });
+      const display = matches ? "" : "none";
+      if (row.style.display !== display) row.style.display = display;
+      if (matches) visible += 1;
+    }
+    const count = searchPanel.querySelector("[data-calibrio-asset-search-count]");
+    const countText = `${visible} of ${rows.length} assets shown`;
+    if (count && count.textContent !== countText) count.textContent = countText;
+    const toolbarCount = assetPanel.querySelector(".asset-toolbar b");
+    const toolbarText = `${visible} assets`;
+    if (toolbarCount && rows.length && toolbarCount.textContent !== toolbarText) toolbarCount.textContent = toolbarText;
+  };
+
+  document.addEventListener("input", (event) => {
+    if (event.target?.matches?.("[data-calibrio-asset-search-field]")) applyAssetRegisterSearch();
+  }, true);
+
+  document.addEventListener("change", (event) => {
+    if (event.target?.matches?.("[data-calibrio-asset-search-field]")) applyAssetRegisterSearch();
+  }, true);
+
+  document.addEventListener("click", (event) => {
+    const clear = event.target?.closest?.("[data-calibrio-clear-asset-search]");
+    if (!clear) return;
+    event.preventDefault();
+    const panel = clear.closest("[data-calibrio-asset-search]");
+    for (const input of panel?.querySelectorAll?.("[data-calibrio-asset-search-field]") || []) input.value = "";
+    applyAssetRegisterSearch();
+  }, true);
+
   const mirrorReading = (sourceInput) => {
     // React owns reading mirroring and manual override state. Avoid writing
     // directly to controlled input elements from this live guard.
@@ -1604,6 +1753,7 @@
     ensureAssetIdDetailButtons();
     applyPreviewAssets();
     completeVisibleCertificatePreviews();
+    applyAssetRegisterSearch();
   }))
     .observe(document.documentElement, { childList: true, subtree: true });
 
@@ -1618,6 +1768,7 @@
       ensureAssetIdDetailButtons();
       applyPreviewAssets();
       completeVisibleCertificatePreviews();
+      applyAssetRegisterSearch();
     }, { once: true });
   } else {
     restoreActiveDraft();
@@ -1629,5 +1780,6 @@
     ensureAssetIdDetailButtons();
     applyPreviewAssets();
     completeVisibleCertificatePreviews();
+    applyAssetRegisterSearch();
   }
 })();
