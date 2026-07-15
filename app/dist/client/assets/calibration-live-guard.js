@@ -15,6 +15,9 @@
   const FORM_DRAFT_KEY = "calibrio-active-form-draft-v1";
   const PROTECTED_STORAGE_KEYS = new Set([
     "calibrio-lab-assets",
+    "calibrio-customer-assets",
+    "calibrio-rental-assets",
+    "calibrio-lab-standards",
     "calibrio-calibrations",
     "calibrio-customers",
     "calibrio-certificate-types",
@@ -105,9 +108,40 @@
     }
   };
 
+  const syncSeparatedAssetStores = (assets) => {
+    if (!Array.isArray(assets)) return;
+    try {
+      const customerAssets = assets.filter((asset) => asset?.classification === "Customer");
+      const rentalAssets = assets
+        .filter((asset) => asset?.classification === "Rental")
+        .map((asset) => ({
+          ...asset,
+          // TODO: future rental fields such as rental status and availability.
+        }));
+      const labStandards = assets
+        .filter((asset) => asset?.classification === "Lab Standard")
+        .map((asset) => ({
+          ...asset,
+          // TODO 17025: traceabilityNumber, nistNumber, uncertainty, tolerance, calibrationInterval, authorizedBy, authorizationDate, location.
+          traceabilityNumber: asset.traceabilityNumber || "",
+          nistNumber: asset.nistNumber || "",
+          uncertainty: asset.uncertainty || "",
+          tolerance: asset.tolerance || "",
+          calibrationInterval: asset.calibrationInterval || "",
+          authorizedBy: asset.authorizedBy || "",
+          authorizationDate: asset.authorizationDate || "",
+          location: asset.location || "",
+        }));
+      localStorage.setItem("calibrio-customer-assets", JSON.stringify(customerAssets));
+      localStorage.setItem("calibrio-rental-assets", JSON.stringify(rentalAssets));
+      localStorage.setItem("calibrio-lab-standards", JSON.stringify(labStandards));
+    } catch {}
+  };
+
   const saveJsonArray = (key, value) => {
     try {
       localStorage.setItem(key, JSON.stringify(value));
+      if (key === "calibrio-lab-assets") syncSeparatedAssetStores(value);
     } catch {}
   };
 

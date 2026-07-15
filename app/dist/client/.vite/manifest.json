@@ -20,7 +20,7 @@
     ]
   },
   "app/page.tsx": {
-    "file": "assets/page-CalAssetHistory.js?v=labstandards-20260713-asset-history-16",
+    "file": "assets/page-CalAssetHistory.js?v=labstandards-20260715-asset-lists-17",
     "name": "page",
     "src": "app/page.tsx",
     "isDynamicEntry": true,
@@ -29,7 +29,7 @@
       "_framework-CXnKph_e.js"
     ],
     "css": [
-      "assets/page-BiT3rEqv.css?v=labstandards-20260713-asset-history-16"
+      "assets/page-BiT3rEqv.css?v=labstandards-20260715-asset-lists-17"
     ]
   },
   "node_modules/.pnpm/vinext@0.0.50_@vitejs+plugi_72d7466280c126a0d9164d58d92e4dd4/node_modules/vinext/dist/shims/layout-segment-context.js": {
@@ -44,7 +44,7 @@
     ]
   },
   "virtual:vinext-app-browser-entry": {
-    "file": "assets/index-CalAssetHistory.js?v=labstandards-20260713-asset-history-16",
+    "file": "assets/index-CalAssetHistory.js?v=labstandards-20260715-asset-lists-17",
     "name": "index",
     "src": "virtual:vinext-app-browser-entry",
     "isEntry": true,

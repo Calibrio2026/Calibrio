@@ -5725,8 +5725,42 @@ var blank = () => ({
 	certificateStored: false,
 	certificateUpdatedAt: "",
 	latestCalibrationId: "",
-	calibrationHistory: []
+	calibrationHistory: [],
+	// TODO 17025: future lab standard traceability and authorization fields.
+	traceabilityNumber: "",
+	nistNumber: "",
+	uncertainty: "",
+	tolerance: "",
+	calibrationInterval: "",
+	authorizedBy: "",
+	authorizationDate: "",
+	location: ""
 });
+function syncSeparatedAssetStores(assets) {
+	if (typeof localStorage === "undefined" || !Array.isArray(assets)) return;
+	try {
+		const customerAssets = assets.filter((asset) => asset.classification === "Customer");
+		const rentalAssets = assets.filter((asset) => asset.classification === "Rental").map((asset) => ({
+			...asset,
+			// TODO: future rental fields such as rental status and availability.
+		}));
+		const labStandards = assets.filter((asset) => asset.classification === "Lab Standard").map((asset) => ({
+			...asset,
+			// TODO 17025: traceabilityNumber, nistNumber, uncertainty, tolerance, calibrationInterval, authorizedBy, authorizationDate, location.
+			traceabilityNumber: asset.traceabilityNumber || "",
+			nistNumber: asset.nistNumber || "",
+			uncertainty: asset.uncertainty || "",
+			tolerance: asset.tolerance || "",
+			calibrationInterval: asset.calibrationInterval || "",
+			authorizedBy: asset.authorizedBy || "",
+			authorizationDate: asset.authorizationDate || "",
+			location: asset.location || ""
+		}));
+		localStorage.setItem("calibrio-customer-assets", JSON.stringify(customerAssets));
+		localStorage.setItem("calibrio-rental-assets", JSON.stringify(rentalAssets));
+		localStorage.setItem("calibrio-lab-standards", JSON.stringify(labStandards));
+	} catch {}
+}
 function calibrationRecordTimestamp(record) {
 	const date = parseDueDate(record?.createdAt || record?.calDate);
 	return date ? date.getTime() : 0;
@@ -5861,6 +5895,7 @@ function Home() {
 						}
 					}
 					setItems(loadedAssets);
+					syncSeparatedAssetStores(loadedAssets);
 				}
 			}
 			if (savedColumns) {
@@ -5888,6 +5923,7 @@ function Home() {
 	const persistAssets = (next) => {
 		setItems(next);
 		localStorage.setItem("calibrio-lab-assets", JSON.stringify(next));
+		syncSeparatedAssetStores(next);
 	};
 	const add = () => setEditing({
 		...blank(),
@@ -5895,7 +5931,7 @@ function Home() {
 	}), save = (x) => {
 		const n = items.some((a) => a.id === x.id) ? items.map((a) => a.id === x.id ? x : a) : [...items, x];
 		persistAssets(n);
-	}, isLab = page === "Lab Standards", isRentals = page === "Rentals", isCustomer = page === "Customer Assets", filtered = items.filter((x) => (isLab ? x.classification === "Lab Standard" : isRentals ? x.classification === "Rental" : isCustomer ? x.classification === "Customer" : true) && Object.values(x).join(" ").toLowerCase().includes(q.toLowerCase()));
+	}, isLab = page === "Lab Standards", isRentals = page === "Rentals", isCustomer = page === "Customer Assets", filtered = items.filter((x) => isLab ? x.classification === "Lab Standard" : isRentals ? x.classification === "Rental" : isCustomer ? x.classification === "Customer" : true);
 	const changePage = (nextPage) => {
 		setPage(nextPage);
 		window.history.replaceState(null, "", nextPage === "Evaluations" ? "/evaluations" : "/");
@@ -5945,7 +5981,7 @@ function Home() {
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "/" }),
 					" ",
 					page
-				] }), page !== "Evaluations" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+				] }), page !== "Evaluations" && !["Customer Assets", "Rentals", "Lab Standards"].includes(page) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
 					className: "search",
 					children: ["Search: ", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
 						value: q,
@@ -5964,7 +6000,7 @@ function Home() {
 					}) : page === "Evaluations" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EvaluationWorkspace, { userName: u.name }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(List, {
 						title: page,
 						rows: filtered,
-						allRows: isLab ? items.filter((x) => x.classification === "Lab Standard") : filtered,
+						allRows: filtered,
 						allAssets: items,
 						add,
 						edit: setEditing,
@@ -6428,10 +6464,53 @@ function AssetDetailModal({ asset, history, close, viewCalibration, editCalibrat
 }
 function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, columns, setColumns, go }) {
 	const [show, setShow] = (0, import_react.useState)(false), [linkedCalibrations, setLinkedCalibrations] = (0, import_react.useState)([]), [linkedCustomers, setLinkedCustomers] = (0, import_react.useState)([]), [calibrationPreview, setCalibrationPreview] = (0, import_react.useState)(null), [assetDetail, setAssetDetail] = (0, import_react.useState)(null);
+	const [advancedSearch, setAdvancedSearch] = (0, import_react.useState)({
+		id: "",
+		serialNumber: "",
+		customer: "",
+		make: "",
+		model: "",
+		certNumber: ""
+	});
 	const isLab = title === "Lab Standards";
-	const desc = isLab ? "Only assets tagged Lab Standard appear here." : title === "Rentals" ? "Only assets tagged Rental appear here." : title === "Customer" ? "Only assets tagged Customer appear here." : "Master list of every asset ever added.";
-	const activeFields = keys.filter((key) => columns.includes(key));
-	const summaryRows = isLab ? getLabSummaryRows(allRows) : [];
+	const isAssetRegister = ["Customer Assets", "Rentals", "Lab Standards"].includes(title);
+	const desc = title === "Customer Assets" || title === "Rentals" ? "Master list of every asset ever added." : isLab ? "Only assets tagged Lab Standard appear here." : "Master list of every asset ever added.";
+	const activeFields = [
+	"id",
+	"serialNumber",
+	"customer",
+	"make",
+	"model",
+	"classification",
+	"procedure",
+	"certNumber",
+	"calDate",
+	"dueDate",
+	"certificate"
+];
+	const searchFields = ["id", "serialNumber", "customer", "make", "model", "certNumber"];
+	const normalizeSearch = (value) => String(value || "").trim().toLowerCase();
+	const matchesAdvancedSearch = (asset) => searchFields.every((key) => {
+		const needle = normalizeSearch(advancedSearch[key]);
+		return !needle || normalizeSearch(asset?.[key]).includes(needle);
+	});
+	const displayRows = rows.filter(matchesAdvancedSearch);
+	const searchIdPrefix = title.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+	const uniqueOptions = (key) => [...new Set(rows.map((asset) => String(asset?.[key] || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, void 0, { sensitivity: "base" }));
+	const customerOptions = [...new Set(linkedCustomers.map((customer) => String(customer?.name || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, void 0, { sensitivity: "base" }));
+	const updateAdvancedSearch = (key, value) => setAdvancedSearch((current) => ({
+		...current,
+		[key]: value
+	}));
+	const clearAdvancedSearch = () => setAdvancedSearch({
+		id: "",
+		serialNumber: "",
+		customer: "",
+		make: "",
+		model: "",
+		certNumber: ""
+	});
+	const summaryRows = [];
 	const hasOutOfCalibration = summaryRows.some(({ status }) => status.tone === "out");
 	const hasDueSoon = summaryRows.some(({ status }) => status.tone === "soon");
 	(0, import_react.useEffect)(() => {
@@ -6552,7 +6631,7 @@ function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, col
 			role: "alert",
 			children: "One or more lab standards will expire within 60 days."
 		}),
-		isLab && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
+		false && isLab && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
 			className: "panel lab-summary-panel",
 			children: [
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
@@ -6605,6 +6684,112 @@ function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, col
 				})
 			]
 		}),
+		isAssetRegister && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
+			className: "panel asset-advanced-search",
+			children: [
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "asset-advanced-search-heading",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Advanced Search" }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Partial match, case-insensitive. Filled fields are combined." })
+					]
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "asset-advanced-search-grid",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Asset ID",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+								value: advancedSearch.id,
+								onChange: (event) => updateAdvancedSearch("id", event.target.value),
+								placeholder: "WS-1000002"
+							})
+						] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Serial Number",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+								value: advancedSearch.serialNumber,
+								onChange: (event) => updateAdvancedSearch("serialNumber", event.target.value),
+								placeholder: "Serial number"
+							})
+						] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Customer",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", {
+								value: advancedSearch.customer,
+								onChange: (event) => updateAdvancedSearch("customer", event.target.value),
+								children: [
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+										value: "",
+										children: "All customers"
+									}),
+									customerOptions.map((customer) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+										value: customer,
+										children: customer
+									}, customer))
+								]
+							})
+						] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Make",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+								list: searchIdPrefix + "-make-options",
+								value: advancedSearch.make,
+								onChange: (event) => updateAdvancedSearch("make", event.target.value),
+								placeholder: "Make"
+							})
+						] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Model",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+								list: searchIdPrefix + "-model-options",
+								value: advancedSearch.model,
+								onChange: (event) => updateAdvancedSearch("model", event.target.value),
+								placeholder: "Model"
+							})
+						] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Calibration Cert #",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+								list: searchIdPrefix + "-cert-options",
+								value: advancedSearch.certNumber,
+								onChange: (event) => updateAdvancedSearch("certNumber", event.target.value),
+								placeholder: "CAL-000001"
+							})
+						] })
+					]
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "asset-advanced-search-actions",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+							type: "button",
+							className: "secondary",
+							onClick: clearAdvancedSearch,
+							children: "Clear search"
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+							displayRows.length,
+							" of ",
+							rows.length,
+							" assets shown"
+						] })
+					]
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("datalist", {
+					id: searchIdPrefix + "-make-options",
+					children: uniqueOptions("make").map((value) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value }, value))
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("datalist", {
+					id: searchIdPrefix + "-model-options",
+					children: uniqueOptions("model").map((value) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value }, value))
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("datalist", {
+					id: searchIdPrefix + "-cert-options",
+					children: uniqueOptions("certNumber").map((value) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value }, value))
+				})
+			]
+		}),
 		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
 			className: "panel asset-panel",
 			children: [
@@ -6612,7 +6797,7 @@ function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, col
 					className: "asset-toolbar",
 					children: [
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("b", { children: [
-							rows.length,
+							displayRows.length,
 							" assets"
 						] }),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
@@ -6646,22 +6831,25 @@ function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, col
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("table", { children: [
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: [
 								activeFields.map((key) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: labels[key] }, key)),
-								isLab && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Calibration Status" }),
-								isLab && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Use Status" }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Edit" })
 							] }) }),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", { children: rows.map((asset) => {
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", { children: displayRows.map((asset) => {
 								const status = getCalibrationStatus(asset);
 								return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", {
 									className: isLab ? `lab-row lab-row-${status.tone}` : void 0,
 									children: [
 										activeFields.map((key) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: renderField(asset, key) }, key)),
-										isLab && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: renderStatusBadge(status) }),
-										isLab && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: renderUseStatus(status) }),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+											type: "button",
+											className: "edit-btn",
+											onClick: () => edit(asset),
+											children: "Edit"
+										}) })
 									]
 								}, asset.id);
 							}) })
 						] }),
-						!rows.length && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						!displayRows.length && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 							className: "empty empty-large",
 							children: [
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "No assets in this list." }),
