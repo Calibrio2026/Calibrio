@@ -1,0 +1,11 @@
+logs/
+app/*.log
+*.tmp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db
+
+.agents/
+.codex/
+__pycache__/
