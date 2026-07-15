@@ -21,6 +21,7 @@
     "calibrio-lab-standards",
     "calibrio-calibrations",
     "calibrio-customers",
+    "calibrio-certificates",
     "calibrio-certificate-types",
   ]);
   const DAY_IN_MS = 864e5;
@@ -1039,7 +1040,16 @@
     }
     const assets = loadAssets();
     const customers = loadCustomers();
-    const certTypes = readJsonArray("calibrio-certificate-types");
+    const certificateLibrary = readJsonArray("calibrio-certificates");
+    const certTypes = [
+      ...new Set([
+        ...readJsonArray("calibrio-certificate-types"),
+        ...certificateLibrary.flatMap((item) => [
+          item?.primaryProcedure,
+          ...(Array.isArray(item?.aliases) ? item.aliases : []),
+        ]),
+      ].map((item) => String(item || "").trim()).filter(Boolean)),
+    ];
     ensureAssetHistoryFallbackStyle();
     document.querySelector(".calibrio-calibration-editor-fallback")?.remove();
     const shade = document.createElement("div");
