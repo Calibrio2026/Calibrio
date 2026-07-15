@@ -1520,25 +1520,17 @@
     const type = ASSET_REGISTER_PAGE_TYPES[pageTitle];
     const assets = loadAssets().filter((asset) => asset.classification === type);
     const customers = uniqueAssetValues(loadCustomers(), "name");
-    const makes = uniqueAssetValues(assets, "make");
-    const models = uniqueAssetValues(assets, "model");
-    const certs = uniqueAssetValues(assets, "certNumber");
-    const id = pageTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const options = (values) => values.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("");
     return `<section class="panel asset-advanced-search" data-calibrio-asset-search="${escapeHtml(pageTitle)}">
       <div class="asset-advanced-search-heading"><b>Advanced Search</b><span>Partial match, case-insensitive. Filled fields are combined.</span></div>
       <div class="asset-advanced-search-grid">
         <label>Asset ID<input data-calibrio-asset-search-field="id" placeholder="WS-1000002"></label>
         <label>Serial Number<input data-calibrio-asset-search-field="serialNumber" placeholder="Serial number"></label>
         <label>Customer<select data-calibrio-asset-search-field="customer"><option value="">All customers</option>${customers.map((customer) => `<option value="${escapeHtml(customer)}">${escapeHtml(customer)}</option>`).join("")}</select></label>
-        <label>Make<input data-calibrio-asset-search-field="make" list="${id}-make-options" placeholder="Make"></label>
-        <label>Model<input data-calibrio-asset-search-field="model" list="${id}-model-options" placeholder="Model"></label>
-        <label>Calibration Cert #<input data-calibrio-asset-search-field="certNumber" list="${id}-cert-options" placeholder="CAL-000001"></label>
+        <label>Make<input data-calibrio-asset-search-field="make" placeholder="Make"></label>
+        <label>Model<input data-calibrio-asset-search-field="model" placeholder="Model"></label>
+        <label>Calibration Cert #<input data-calibrio-asset-search-field="certNumber" placeholder="CAL-000001"></label>
       </div>
       <div class="asset-advanced-search-actions"><button type="button" class="secondary" data-calibrio-clear-asset-search>Clear search</button><span data-calibrio-asset-search-count>${assets.length} of ${assets.length} assets shown</span></div>
-      <datalist id="${id}-make-options">${options(makes)}</datalist>
-      <datalist id="${id}-model-options">${options(models)}</datalist>
-      <datalist id="${id}-cert-options">${options(certs)}</datalist>
     </section>`;
   };
 

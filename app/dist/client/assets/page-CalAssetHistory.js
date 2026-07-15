@@ -7172,7 +7172,6 @@ function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, col
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
 							"Make",
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-								list: searchIdPrefix + "-make-options",
 								value: advancedSearch.make,
 								onChange: (event) => updateAdvancedSearch("make", event.target.value),
 								placeholder: "Make"
@@ -7181,7 +7180,6 @@ function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, col
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
 							"Model",
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-								list: searchIdPrefix + "-model-options",
 								value: advancedSearch.model,
 								onChange: (event) => updateAdvancedSearch("model", event.target.value),
 								placeholder: "Model"
@@ -7190,7 +7188,6 @@ function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, col
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
 							"Calibration Cert #",
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-								list: searchIdPrefix + "-cert-options",
 								value: advancedSearch.certNumber,
 								onChange: (event) => updateAdvancedSearch("certNumber", event.target.value),
 								placeholder: "CAL-000001"
@@ -7215,18 +7212,6 @@ function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, col
 						] })
 					]
 				}),
-				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("datalist", {
-					id: searchIdPrefix + "-make-options",
-					children: uniqueOptions("make").map((value) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value }, value))
-				}),
-				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("datalist", {
-					id: searchIdPrefix + "-model-options",
-					children: uniqueOptions("model").map((value) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value }, value))
-				}),
-				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("datalist", {
-					id: searchIdPrefix + "-cert-options",
-					children: uniqueOptions("certNumber").map((value) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value }, value))
-				})
 			]
 		}),
 		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
