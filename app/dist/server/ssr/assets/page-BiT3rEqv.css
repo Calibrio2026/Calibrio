@@ -29,11 +29,16 @@
 .certificate-template-tabs button.active{background:#1680af;color:#fff;border-color:#1680af}
 .certificate-template-edit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .certificate-template-edit-grid label,.certificate-table-builder-card label{display:grid;gap:6px;color:#334e68;font-size:12px;font-weight:900}
+.certificate-template-edit-grid label>span{display:block;margin-bottom:2px;color:#334e68}
 .certificate-template-edit-grid input,.certificate-template-edit-grid select,.certificate-template-edit-grid textarea,.certificate-table-builder-card input,.certificate-table-builder-card textarea{width:100%;border:1px solid #cedbe8;border-radius:6px;padding:10px 11px;color:#173a5a;background:#fff;font:inherit}
 .certificate-template-edit-grid textarea{min-height:88px;resize:vertical}
 .certificate-template-span{grid-column:1/-1}
 .certificate-template-check-inline{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center;gap:9px;align-self:end;min-height:40px}
 .certificate-template-check-inline input{width:auto!important}
+.certificate-template-presets{border:1px solid #d7e3ef;border-radius:8px;padding:14px;margin:0;background:#f9fbfd}
+.certificate-template-presets legend{color:#334e68;font-size:12px;font-weight:900;padding:0 6px}
+.certificate-template-presets label{display:flex!important;align-items:center;gap:9px;margin:8px 0;color:#173a5a;font-size:13px;font-weight:800}
+.certificate-template-presets input{width:auto!important}
 .certificate-template-requires{border:1px solid #d7e3ef;border-radius:8px;padding:14px;margin:0}
 .certificate-template-requires>div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .certificate-template-require-box{display:flex!important;align-items:center;gap:10px;border:1px solid #e0e9f2;border-radius:7px;padding:10px;background:#f9fbfd}
@@ -65,10 +70,6 @@
 .certificate-table-grid th{background:#f3f7fb;color:#5b7188;font-size:11px;text-transform:uppercase;position:relative}
 .certificate-table-grid th .mini-danger{position:absolute;right:5px;top:5px}
 .certificate-table-grid input{border:0!important;padding:6px!important;text-align:center}
-.certificate-upload-drop{border:2px dashed #99b7d3;border-radius:10px;padding:34px;display:grid;place-items:center;gap:8px;background:#f8fbff;color:#173a5a;text-align:center}
-.certificate-upload-drop input[type=file]{display:none}
-.certificate-upload-preview{border:1px solid #d7e3ef;border-radius:8px;background:#fff;margin-top:16px;padding:14px}
-.certificate-upload-preview p{color:#607894;margin:6px 0 12px}
 .certificate-graph-card,.certificate-graph-placeholder{border:1px solid #d7e3ef;border-radius:8px;background:#fff;margin-top:16px;padding:14px}
 .certificate-graph-card svg{width:100%;height:auto;max-height:260px}
 .certificate-graph-card line{stroke:#8aa1b6;stroke-width:1}
