@@ -77,3 +77,52 @@
 .certificate-graph-card circle{fill:#dc2626}
 .certificate-graph-card text{fill:#516c89;font-size:12px}
 @media (width<=980px){.certificate-template-drawer,.certificate-template-modal{width:calc(100vw - 24px)!important;min-width:0}.certificate-template-edit-grid,.certificate-template-detail-grid,.certificate-table-meta,.certificate-template-requires>div,.certificate-template-requirement-list{grid-template-columns:1fr}.certificate-table-builder-card header{grid-template-columns:1fr}.certificate-template-builder-head{display:grid}.certificate-template-builder-head>div:last-child{justify-content:flex-start}}
+
+/* Dynamic calibration template data entry */
+.calibration-modal{width:min(1180px,100% - 30px)!important}
+.calibration-data-section{border-top:1px solid #e1eaf2;margin-top:20px;padding-top:18px;max-height:58vh;overflow-y:auto;overflow-x:hidden}
+.calibration-data-section>header{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:14px}
+.calibration-data-section h3{color:#173a5a;margin:0;font-size:17px}
+.calibration-data-section header p{color:#6f8399;margin:3px 0 0;font-size:12px;font-weight:800}
+.calibration-data-controls{margin-bottom:14px}
+.calibration-passfail-control{display:flex!important;align-items:center;gap:10px;margin:4px 0 14px;padding:10px 12px;border:1px solid #cfe0ef;border-radius:8px;background:#f7fbff;font-weight:700}
+.calibration-passfail-control input{width:auto!important;margin:0!important}
+.calibration-data-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.calibration-data-card{background:#fff;border:1px solid #d5e1eb;border-radius:8px;min-width:0;padding:12px;overflow:hidden}
+.calibration-data-card h4{color:#173a5a;margin:0 0 10px;font-size:14px}
+.calibration-data-card-head{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:10px}
+.calibration-data-card-head h4{margin:0}
+.calibration-dynamic-table{width:100%;border-collapse:collapse;border:1px solid #d5e1eb;table-layout:fixed}
+.calibration-dynamic-table th,.calibration-dynamic-table td{border:1px solid #d5e1eb;text-align:center;padding:7px;vertical-align:middle}
+.calibration-dynamic-table th{background:#f5f8fb;color:#58718c;font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+.calibration-dynamic-table td{color:#173a5a;font-size:12px}
+.calibration-dynamic-table input{width:100%;min-width:0;border:1px solid #d9e1ea;border-radius:5px;padding:7px 8px;font:13px Arial;text-align:center}
+.torque-card{margin-bottom:16px}
+.torque-graph-card svg{width:100%;height:auto;max-height:260px;background:#fbfdff;border:1px solid #e0e8f0;border-radius:7px}
+.torque-graph-card line{stroke:#8aa1b6;stroke-width:1}
+.torque-graph-card polyline{fill:none;stroke-width:3}
+.torque-graph-card .as-found-line{stroke:#1680af}
+.torque-graph-card .as-left-line{stroke:#dc2626}
+.torque-graph-card text{fill:#516c89;font-size:12px}
+.torque-legend{display:flex;gap:14px;margin-top:8px;color:#516c89;font-size:11px;font-weight:900}
+.torque-legend span:first-child:before,.torque-legend span:last-child:before{content:"";display:inline-block;width:18px;height:3px;margin-right:6px;vertical-align:middle;background:#1680af}
+.torque-legend span:last-child:before{background:#dc2626}
+.conversion-card{margin-top:16px}
+@media (width<=900px){.calibration-data-grid{grid-template-columns:1fr}.calibration-data-section>header{display:block}.calibration-data-card-head{align-items:flex-start;flex-direction:column}}
+
+/* Final certificate library and torque graph polish */
+.certificate-template-fields label{display:block;color:#334e68;font-size:12px;font-weight:900}
+.certificate-template-fields input,.certificate-template-fields select,.certificate-template-fields textarea{width:100%;border:1px solid #cedbe8;border-radius:6px;padding:10px 11px;color:#173a5a;background:#fff;font:13px Arial,sans-serif;margin-top:6px}
+.certificate-template-fields textarea{min-height:86px;resize:vertical}
+.certificate-template-preview{grid-column:1/-1;border:1px solid #d7e3ef;border-radius:8px;background:#fbfdff;margin:14px 0;padding:14px}
+.certificate-template-preview h3{margin:0 0 10px;color:#173a5a;font-size:14px}
+.certificate-template-preview table{width:100%;border-collapse:collapse;background:#fff}
+.certificate-template-preview th,.certificate-template-preview td{border:1px solid #d5e1eb;text-align:center;padding:7px;color:#173a5a}
+.certificate-template-preview th{background:#f4f8fb;color:#58718c;font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+.flex{display:flex}.gap-2{gap:8px}.px-3{padding-left:12px!important;padding-right:12px!important}.py-1{padding-top:6px!important;padding-bottom:6px!important}.border{border:1px solid #cbd8e5!important}.rounded{border-radius:6px!important}.bg-white{background:#fff!important}.bg-red-600{background:#dc2626!important;border-color:#dc2626!important}.text-white{color:#fff!important}.hover\:bg-red-700:hover{background:#b91c1c!important;border-color:#b91c1c!important}
+.calibration-copy-control{display:flex!important;align-items:center;gap:9px;margin:2px 0 12px;padding:10px 12px;border:1px solid #cfe0ef;border-radius:8px;background:#f7fbff;color:#173a5a;font-weight:800}
+.calibration-copy-control input{width:auto!important;margin:0!important}
+.calibration-dynamic-table input[readonly]{background:#f3f7fb;color:#435c75;font-weight:800}
+.torque-graph-card .torque-graph-bg{fill:#e5e5e5;stroke:none}
+.torque-graph-card .torque-black-line{stroke:#000;fill:none;stroke-width:3}
+.torque-graph-card circle{fill:#000}

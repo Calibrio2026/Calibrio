@@ -1,6 +1,8 @@
 (() => {
-  if (window.__calibrioCalibrationLiveGuard) return;
-  window.__calibrioCalibrationLiveGuard = true;
+  const rootDataset = document.documentElement.dataset;
+  if (rootDataset.calibrioCalibrationLiveGuard === "true") return;
+  rootDataset.calibrioCalibrationLiveGuard = "true";
+  rootDataset.calibrioLiveGuardVersion = "calibrio-final-cert-templates-20260716-04";
 
   const state = {
     fixing: false,
@@ -10,6 +12,9 @@
     certificateTemplateSearch: "",
     activeCertificateTemplateId: "",
     certificateTemplateDrawerMode: "view",
+    includePassFailStatement: false,
+    storageProtectionInstalled: false,
+    draftProtectionInstalled: false,
   };
   const LOGO_URL = new URL("/assets/winshaw-logo.png?v=winshaw-logo-20260713", window.location.origin).href;
   const WATERMARK_URL = new URL("/assets/winshaw-watermark.png?v=winshaw-watermark-20260713", window.location.origin).href;
@@ -28,7 +33,11 @@
     "calibrio-certificate-types",
   ]);
   const DAY_IN_MS = 864e5;
-  const supportsWsWpCrt004Workbook = (record) => String(record?.certificateType || record?.procedure || "").toUpperCase().includes("WS-WP-CRT-004");
+  const supportsWsWpCrt004Workbook = (record) => {
+    const procedure = String(record?.certificateType || record?.procedure || "").toUpperCase();
+    const type = String(record?.certificateTemplateType || record?.readsType || "").toUpperCase();
+    return procedure.includes("WS-WP-CRT-004") && !/TORQUE/.test(`${procedure} ${type}`);
+  };
 
   const cleanNumber = (text) => {
     const value = Number(String(text || "").replace(/,/g, "").match(/-?\d+(\.\d+)?/)?.[0]);
@@ -48,7 +57,8 @@
 
   const writePassFailPreference = (enabled) => {
     const value = enabled === true;
-    window.__calibrioIncludePassFailStatement = value;
+    state.includePassFailStatement = value;
+    document.documentElement.dataset.calibrioIncludePassFailStatement = value ? "1" : "0";
     try {
       localStorage.setItem(PASS_FAIL_PREF_KEY, value ? "1" : "0");
     } catch {}
@@ -151,8 +161,8 @@
   };
 
   const installStorageProtection = () => {
-    if (window.__calibrioStorageProtectionInstalled) return;
-    window.__calibrioStorageProtectionInstalled = true;
+    if (state.storageProtectionInstalled) return;
+    state.storageProtectionInstalled = true;
     const originalRemoveItem = Storage.prototype.removeItem;
     Storage.prototype.removeItem = function protectedRemoveItem(key) {
       try {
@@ -255,8 +265,8 @@
   };
 
   const installDraftProtection = () => {
-    if (window.__calibrioDraftProtectionInstalled) return;
-    window.__calibrioDraftProtectionInstalled = true;
+    if (state.draftProtectionInstalled) return;
+    state.draftProtectionInstalled = true;
     let queued = false;
     const queueSave = () => {
       if (queued) return;
@@ -888,6 +898,81 @@
     return `<div class="calibrio-cert-panel${includePassFail ? " has-status" : ""}"><h4>${escapeHtml(title)}</h4><table><colgroup>${widths.map((width) => `<col style="width:${width}">`).join("")}</colgroup><thead><tr><th>Pressure Gauge</th><th>Standard Output</th><th>Percent Deviation</th>${includePassFail ? "<th>Status</th>" : ""}</tr></thead><tbody>${renderFallbackReadingRows(record, values, reverseOrder)}</tbody></table></div>`;
   };
 
+  const recordTemplateType = (record) => {
+    const source = `${record?.certificateTemplateType || ""} ${record?.readsType || ""} ${record?.certificateType || ""} ${record?.procedure || ""}`;
+    return normalizeTemplateType(source);
+  };
+
+  const hasDynamicPressureData = (record) => Array.isArray(record?.data?.asFoundInc) && record.data.asFoundInc.length > 0;
+
+  const renderDynamicPressurePreviewTable = (title, rows, record, reverseOrder = false) => {
+    const includePassFail = record.includePassFail === true;
+    const allowed = Number(record.maximum);
+    const ordered = [...(rows || [])].sort((a, b) => Number(a.gauge) - Number(b.gauge));
+    if (reverseOrder) ordered.reverse();
+    return `<div class="calibrio-cert-panel${includePassFail ? " has-status" : ""}"><h4>${escapeHtml(title)}</h4><table><thead><tr><th>Gauge PSI</th><th>Standard Output PSI</th><th>% Deviation</th>${includePassFail ? "<th>Status</th>" : ""}</tr></thead><tbody>${ordered.map((row) => {
+      const result = getReadingResult(Number(row.gauge), String(row.standard || ""), allowed);
+      const status = result.hasReading && Number.isFinite(allowed) ? result.inTolerance ? "PASS" : "FAIL" : "-";
+      const statusCell = includePassFail ? `<td class="${status === "PASS" ? "pass" : status === "FAIL" ? "fail" : ""}">${status}</td>` : "";
+      return `<tr><td>${formatDynamicPoint(row.gauge)} PSI</td><td>${escapeHtml(displayCertValue(row.standard))}</td><td>${escapeHtml(row.deviation || pressureDeviationText(row.gauge, row.standard))}</td>${statusCell}</tr>`;
+    }).join("")}</tbody></table></div>`;
+  };
+
+  const renderTorquePreviewTable = (title, rows, type, unit) => {
+    const isHydraulic = isHydraulicTorqueTemplateType(type);
+    const headers = isHydraulic ? ["Input PSI", "Target PSI", `Output ${unit}`] : [`Target ${unit}`, `Input ${unit}`, `Output ${unit}`];
+    return `<div class="calibrio-cert-panel"><h4>${escapeHtml(title)}</h4><table><thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${(rows || []).map((row) => {
+      const cells = isHydraulic
+        ? [row.inputPSI, row.targetPSI || row.target, row.outputFTLB || row.output]
+        : [row.target, row.input || row.target, row.output || row.outputFTLB];
+      return `<tr>${cells.map((cell) => `<td>${escapeHtml(displayCertValue(cell))}</td>`).join("")}</tr>`;
+    }).join("")}</tbody></table></div>`;
+  };
+
+  const renderTorquePreviewGraph = (title, rows, type, unit) => {
+    const isHydraulic = isHydraulicTorqueTemplateType(type);
+    const graphRows = (rows || []).map((row) => isHydraulic ? {
+      inputPSI: row.inputPSI,
+      outputFTLB: row.outputFTLB || row.output,
+    } : {
+      input: row.input || row.target,
+      output: row.output || row.outputFTLB,
+    });
+    const graph = isHydraulic
+      ? dynamicGraphHtml(title, graphRows, unit, "inputPSI", "outputFTLB", "Input PSI", "Output")
+      : dynamicGraphHtml(title, graphRows, unit, "input", "output", `Input ${unit}`, "Output");
+    return `<div class="calibrio-cert-panel"><h4>${escapeHtml(title)} Graph</h4><div class="cal-dynamic-graph">${graph}</div></div>`;
+  };
+
+  const calibrationPreviewReadingsHtml = (record) => {
+    const type = recordTemplateType(record);
+    const unit = record.unit || (isTorqueTemplateType(type) ? "FTLB" : "PSI");
+    if (isTorqueTemplateType(type)) {
+      const asFound = record.data?.asFoundTorque || record.data?.asFound || [];
+      const asLeft = record.data?.asLeftTorque || record.data?.asLeft || [];
+      return [
+        renderTorquePreviewTable("As Found", asFound, type, unit),
+        renderTorquePreviewGraph("As Found", asFound, type, unit),
+        renderTorquePreviewTable("As Left", asLeft, type, unit),
+        renderTorquePreviewGraph("As Left", asLeft, type, unit),
+      ].join("");
+    }
+    if (hasDynamicPressureData(record)) {
+      return [
+        renderDynamicPressurePreviewTable("As Found - Increasing", record.data.asFoundInc, record),
+        renderDynamicPressurePreviewTable("As Left - Increasing", record.data.asLeftInc, record),
+        renderDynamicPressurePreviewTable("As Found - Decreasing", record.data.asFoundDec, record, true),
+        renderDynamicPressurePreviewTable("As Left - Decreasing", record.data.asLeftDec, record, true),
+      ].join("");
+    }
+    return [
+      renderFallbackReadingTable("As Found - Increasing", record, normalizeReadings(record.readings)),
+      renderFallbackReadingTable("As Left - Increasing", record, normalizeReadings(record.asLeftIncreasing, record.readings)),
+      renderFallbackReadingTable("As Found - Decreasing", record, normalizeReadings(record.asFoundDecreasing, record.readings), true),
+      renderFallbackReadingTable("As Left - Decreasing", record, normalizeReadings(record.asLeftDecreasing, record.readings), true),
+    ].join("");
+  };
+
   const displayCertValue = (...values) => {
     for (const value of values) {
       if (value === 0) return "0";
@@ -940,7 +1025,7 @@
           <h3>Asset / UUT</h3>
           ${certFact("Asset ID:", asset?.id || record.assetId)}
           ${certFact("Type:", asset?.classification || asset?.type || record.assetType)}
-          ${certFact(`${record.unit || "PSI"}:`, record.pressureRating)}
+          ${certFact(isTorqueTemplateType(recordTemplateType(record)) ? `Capacity / Range ${record.unit || ""}:` : `${record.unit || "PSI"}:`, record.capacity || record.pressureRating || record.range)}
           ${certFact("Manufacturer:", asset?.make || record.make)}
           ${certFact("Model:", record.model || asset?.model)}
           ${certFact("S/N:", record.serialNumber || asset?.serialNumber)}
@@ -948,10 +1033,7 @@
         </section>
       </div>
       <div class="calibrio-cert-reading-grid">
-        ${renderFallbackReadingTable("As Found - Increasing", record, normalizeReadings(record.readings))}
-        ${renderFallbackReadingTable("As Left - Increasing", record, normalizeReadings(record.asLeftIncreasing, record.readings))}
-        ${renderFallbackReadingTable("As Found - Decreasing", record, normalizeReadings(record.asFoundDecreasing, record.readings), true)}
-        ${renderFallbackReadingTable("As Left - Decreasing", record, normalizeReadings(record.asLeftDecreasing, record.readings), true)}
+        ${calibrationPreviewReadingsHtml(record)}
       </div>
       <section class="calibrio-cert-standard"><h4>Calibration Standard</h4><table><thead><tr><th>Asset ID</th><th>Make</th><th>Model</th><th>Serial Number</th><th>Due Date</th><th>Traceability</th></tr></thead><tbody><tr><td>${escapeHtml(standard?.id || record.standardId || "-")}</td><td>${escapeHtml(standard?.make || "-")}</td><td>${escapeHtml(standard?.model || "-")}</td><td>${escapeHtml(standard?.serialNumber || "-")}</td><td>${escapeHtml(standard?.dueDate || "-")}</td><td>${escapeHtml(standard?.certNumber || "-")}</td></tr></tbody></table></section>
       <section class="calibrio-cert-notes">
@@ -1454,8 +1536,340 @@
     if (!enabled) stripPassFailColumns(doc);
   };
 
+  const ensureCalibrationDataFallbackStyle = () => {
+    if (document.getElementById("calibrio-dynamic-calibration-style")) return;
+    const style = document.createElement("style");
+    style.id = "calibrio-dynamic-calibration-style";
+    style.textContent = ".calibrio-dynamic-fallback{grid-column:1/-1;border-top:1px solid #d8e5f0;margin-top:10px;padding-top:18px}.calibrio-dynamic-fallback .cal-data-controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.calibrio-dynamic-fallback label{font-weight:700;color:#0a315f}.calibrio-dynamic-fallback input,.calibrio-dynamic-fallback select{border:1px solid #cfe0ef;border-radius:6px;min-height:34px;padding:7px 9px;width:100%}.calibrio-dynamic-fallback .cal-check{display:flex!important;align-items:center;gap:8px;margin-top:20px}.calibrio-dynamic-fallback .cal-check input{width:auto;min-height:auto}.cal-dynamic-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.cal-dynamic-panel{border:1px solid #d6e4f1;border-radius:8px;overflow:hidden;background:#fff}.cal-dynamic-panel h3{margin:0;padding:10px 12px;font-size:15px;background:#fff}.cal-dynamic-table{width:100%;border-collapse:collapse;table-layout:fixed}.cal-dynamic-table th,.cal-dynamic-table td{border-top:1px solid #e1ebf4;padding:8px 10px;text-align:center}.cal-dynamic-table th{background:#f4f8fc;color:#536f8a;font-size:11px}.cal-dynamic-table td:first-child,.cal-dynamic-table th:first-child{text-align:left}.cal-dynamic-table input{min-height:32px}.cal-dynamic-muted{color:#6a8197;font-size:12px}.cal-dynamic-graph{border-top:1px solid #e1ebf4;background:#f2f3f5;padding:10px}.cal-dynamic-graph svg{display:block;width:100%;height:210px}.cal-dynamic-graph text{font-size:10px;fill:#28394a}.cal-dynamic-graph .axis{stroke:#1d2c3b;stroke-width:1.2}.cal-dynamic-graph .grid{stroke:#c8d0d8;stroke-width:.7}.cal-dynamic-graph .line{fill:none;stroke:#111;stroke-width:2.4}.cal-dynamic-graph .dot{fill:#111}.cal-dynamic-copy{display:flex;align-items:center;gap:8px;margin:0 12px 10px;font-size:12px;font-weight:700}.cal-dynamic-copy input{width:auto;min-height:auto}.cal-dynamic-deviation{font-weight:700;color:#234866}@media (max-width:950px){.calibrio-dynamic-fallback .cal-data-controls,.cal-dynamic-grid{grid-template-columns:1fr}}";
+    document.head?.appendChild(style);
+  };
+
+  const numericText = (value) => {
+    const number = Number(String(value ?? "").replace(/,/g, "").match(/-?\d+(\.\d+)?/)?.[0]);
+    return Number.isFinite(number) ? number : null;
+  };
+
+  const formatDynamicPoint = (value) => {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "";
+    return Number.isInteger(number) ? number.toLocaleString("en-US") : number.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  };
+
+  const accuracyPercentValue = (value, fallback = 1) => {
+    const parsed = numericText(value);
+    return Number.isFinite(parsed) ? Math.abs(parsed) : fallback;
+  };
+
+  const pressureDeviationText = (gauge, standard) => {
+    const gaugeNumber = numericText(gauge);
+    const standardNumber = numericText(standard);
+    if (!Number.isFinite(gaugeNumber) || !Number.isFinite(standardNumber)) return "-";
+    if (gaugeNumber === 0) return standardNumber === 0 ? "0.00%" : "-";
+    const diff = (standardNumber - gaugeNumber) / gaugeNumber * 100;
+    return `${diff > 0 ? "+" : ""}${diff.toFixed(2)}%`;
+  };
+
+  const addMonthsToDateText = (dateText, interval, customInterval) => {
+    const months = interval === "other" ? Number(customInterval) : Number(interval);
+    const date = new Date(dateText);
+    if (!Number.isFinite(months) || months <= 0 || Number.isNaN(date.getTime())) return "";
+    date.setMonth(date.getMonth() + months);
+    return date.toLocaleDateString();
+  };
+
+  const nextCalibrationId = () => {
+    const nextNumber = loadCalibrationRecords().reduce((highest, record) => {
+      const value = Number(String(record.id || "").replace(/^CAL-/i, ""));
+      return Number.isFinite(value) ? Math.max(highest, value) : highest;
+    }, 0) + 1;
+    return `CAL-${String(nextNumber).padStart(6, "0")}`;
+  };
+
+  const selectedOptionText = (select) => select?.options?.[select.selectedIndex]?.textContent?.trim() || "";
+
+  const resolveDynamicTemplateForForm = (form) => {
+    const certificateSelect = labelInput(form, "Certificate type") || form.querySelector("select");
+    const selected = String(certificateSelect?.value || selectedOptionText(certificateSelect) || "").trim();
+    const selectedText = selectedOptionText(certificateSelect);
+    const haystack = `${selected} ${selectedText}`;
+    const templates = readCertificateTemplates();
+    const selectedCandidates = [selected, selectedText, haystack]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean);
+    const templateValues = (template) => [template.id, template.name, template.primaryProcedure, ...(template.aliases || [])]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean);
+    const exactMatched = templates.find((template) => {
+      const values = templateValues(template);
+      return selectedCandidates.some((candidate) => values.includes(candidate));
+    });
+    if (exactMatched) return normalizeCertificateTemplate(exactMatched);
+    const explicitType = normalizeTemplateType(haystack);
+    if (explicitType === "manual_torque" || explicitType === "hydraulic_torque") {
+      const typeMatched = templates
+        .map((template, index) => normalizeCertificateTemplate(template, index))
+        .find((template) => normalizeTemplateType(template.type) === explicitType && selectedCandidates.some((candidate) => {
+          const values = templateValues(template);
+          return values.some((value) => value === candidate || candidate.includes(value) || value.includes(candidate));
+        }));
+      if (typeMatched) return typeMatched;
+      return explicitType === "manual_torque" ? manualTorquePresetTemplate("CERT-003") : hydraulicTorquePresetTemplate("CERT-002");
+    }
+    const normalizedSelected = haystack.toLowerCase();
+    const matched = templates.find((template) => {
+      const values = [template.id, template.name, template.primaryProcedure, ...(template.aliases || [])]
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter(Boolean);
+      return values.some((value) => value === normalizedSelected || normalizedSelected.includes(value) || value.includes(normalizedSelected));
+    });
+    if (matched) return normalizeCertificateTemplate(matched);
+    if (/manual.*torque|crt-006/i.test(haystack)) return manualTorquePresetTemplate("CERT-003");
+    if (/hydraulic.*torque|psi.*torque/i.test(haystack)) return hydraulicTorquePresetTemplate("CERT-002");
+    return pressurePresetTemplate("CERT-001");
+  };
+
+  const dynamicSectionValues = (section, key) => {
+    const values = [];
+    if (!section) return values;
+    for (const input of section.querySelectorAll(`[data-cal-reading-key="${key}"]`)) {
+      const index = Number(input.dataset.calReadingIndex);
+      values[index] = input.value || "";
+    }
+    return values;
+  };
+
+  const dynamicTorqueValues = (section, table) => {
+    const values = [];
+    if (!section) return values;
+    for (const input of section.querySelectorAll(`[data-cal-torque-table="${table}"]`)) {
+      const index = Number(input.dataset.calTorqueIndex);
+      values[index] = input.value || "";
+    }
+    return values;
+  };
+
+  const pressureFallbackPoints = (range, template) => {
+    const rating = numericText(range);
+    const points = Array.isArray(template?.percentPoints) && template.percentPoints.length ? template.percentPoints : CERT_PERCENT_POINTS;
+    if (!Number.isFinite(rating) || rating <= 0) return [];
+    const values = points.slice(0, normalizeTemplatePoints(template?.points ?? template?.testPoints, 5)).map((percent) => rating * Number(percent) / 100);
+    return template?.includeZero === true ? [0, ...values] : values;
+  };
+
+  const manualFallbackPoints = (capacity, template) => {
+    const rating = numericText(capacity);
+    const points = Array.isArray(template?.percentPoints) && template.percentPoints.length ? template.percentPoints : CERT_PERCENT_POINTS;
+    if (!Number.isFinite(rating) || rating <= 0) return [];
+    return points.slice(0, normalizeTemplatePoints(template?.points ?? template?.testPoints, 5)).map((percent) => rating * Number(percent) / 100);
+  };
+
+  const tableRowsFromPressureInputs = (section, key) => [...section.querySelectorAll(`[data-cal-reading-key="${key}"]`)]
+    .map((input) => ({
+      gauge: input.dataset.calPoint || "",
+      standard: input.value || "",
+      deviation: pressureDeviationText(input.dataset.calPoint, input.value),
+    }))
+    .sort((a, b) => Number(a.gauge) - Number(b.gauge));
+
+  const tableRowsFromTorqueInputs = (section, table, type) => [...section.querySelectorAll(`[data-cal-torque-table="${table}"]`)]
+    .map((input) => {
+      if (type === "hydraulic_torque") {
+        return {
+          inputPSI: input.dataset.calInput || "",
+          targetPSI: input.dataset.calTarget || "",
+          outputFTLB: input.value || "",
+          output: input.value || "",
+        };
+      }
+      return {
+        target: input.dataset.calTarget || "",
+        input: input.dataset.calInput || input.dataset.calTarget || "",
+        output: input.value || "",
+        outputFTLB: input.value || "",
+      };
+    })
+    .sort((a, b) => Number(a.inputPSI || a.input || a.target) - Number(b.inputPSI || b.input || b.target));
+
+  const dynamicGraphHtml = (title, rows, unit, xField, yField, xLabel, yLabel) => {
+    const width = 520;
+    const height = 210;
+    const left = 48;
+    const right = 14;
+    const top = 18;
+    const bottom = 38;
+    const plotWidth = width - left - right;
+    const plotHeight = height - top - bottom;
+    const points = rows.map((row) => ({
+      x: Number(row[xField]),
+      y: Number(row[yField]),
+    })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+    const xMax = Math.max(1, ...rows.map((row) => Number(row[xField])).filter(Number.isFinite), ...points.map((point) => point.x));
+    const yMax = Math.max(1, xMax, ...points.map((point) => point.y));
+    const xy = (point) => {
+      const x = left + point.x / xMax * plotWidth;
+      const y = top + plotHeight - point.y / yMax * plotHeight;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    };
+    const polyline = points.map(xy).join(" ");
+    const dots = points.map((point) => {
+      const [x, y] = xy(point).split(",");
+      return `<circle class="dot" cx="${x}" cy="${y}" r="3" fill="#111"></circle>`;
+    }).join("");
+    const grid = [0, .25, .5, .75, 1].map((ratio) => {
+      const y = top + plotHeight - ratio * plotHeight;
+      const x = left + ratio * plotWidth;
+      return `<line class="grid" x1="${left}" y1="${y}" x2="${width - right}" y2="${y}" stroke="#c8d0d8" stroke-width=".7"></line><line class="grid" x1="${x}" y1="${top}" x2="${x}" y2="${top + plotHeight}" stroke="#c8d0d8" stroke-width=".7"></line>`;
+    }).join("");
+    return `<div class="cal-dynamic-graph-body"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(title)} graph"><rect x="0" y="0" width="${width}" height="${height}" fill="#f0f1f3"></rect>${grid}<line class="axis" x1="${left}" y1="${top + plotHeight}" x2="${width - right}" y2="${top + plotHeight}" stroke="#1d2c3b" stroke-width="1.2"></line><line class="axis" x1="${left}" y1="${top}" x2="${left}" y2="${top + plotHeight}" stroke="#1d2c3b" stroke-width="1.2"></line><text x="${width / 2}" y="${height - 8}" text-anchor="middle" font-size="10" fill="#28394a">${escapeHtml(xLabel)}</text><text x="15" y="${height / 2}" text-anchor="middle" transform="rotate(-90 15 ${height / 2})" font-size="10" fill="#28394a">${escapeHtml(yLabel)} ${escapeHtml(unit || "")}</text><text x="${left}" y="12" font-size="10" fill="#28394a">${escapeHtml(title)}</text>${polyline ? `<polyline class="line" points="${polyline}" fill="none" stroke="#111" stroke-width="2.4"></polyline>${dots}` : ""}</svg></div>`;
+  };
+
+  const updateDynamicFallbackGraphs = (section) => {
+    if (!section) return;
+    const type = section.dataset.calTemplateType || "pressure_gauge";
+    if (!isTorqueTemplateType(type)) return;
+    const unit = section.querySelector("[data-cal-control='unit']")?.value || section.dataset.calUnit || "FTLB";
+    for (const graph of section.querySelectorAll("[data-cal-dynamic-graph]")) {
+      const table = graph.dataset.calDynamicGraph;
+      const rows = tableRowsFromTorqueInputs(section, table, type);
+      const title = table === "asLeft" ? "As Left" : "As Found";
+      const html = type === "hydraulic_torque"
+        ? dynamicGraphHtml(title, rows, unit, "inputPSI", "outputFTLB", "Input PSI", "Output")
+        : dynamicGraphHtml(title, rows, unit, "input", "output", `Input ${unit}`, "Output");
+      graph.innerHTML = html;
+    }
+  };
+
+  const updatePressureDeviationCells = (section, input) => {
+    if (!input) return;
+    const deviation = input.closest("tr")?.querySelector("[data-cal-deviation]");
+    if (deviation) deviation.textContent = pressureDeviationText(input.dataset.calPoint, input.value);
+  };
+
+  const mirrorPressureFallback = (section, index, value) => {
+    for (const key of ["asLeftInc", "asFoundDec", "asLeftDec"]) {
+      const target = section.querySelector(`[data-cal-reading-key="${key}"][data-cal-reading-index="${index}"]`);
+      if (!target || target.dataset.manualOverride === "1") continue;
+      target.value = value;
+      updatePressureDeviationCells(section, target);
+    }
+  };
+
+  const mirrorTorqueFallback = (section, index, value) => {
+    const copy = section.querySelector("[data-cal-control='copyAsFound']")?.checked !== false;
+    if (!copy) return;
+    const target = section.querySelector(`[data-cal-torque-table="asLeft"][data-cal-torque-index="${index}"]`);
+    if (!target || target.dataset.manualOverride === "1") return;
+    target.value = value;
+  };
+
+  const renderPressureFallbackTable = (title, key, points, values, decreasing = false) => {
+    const ordered = points.map((point, index) => ({ point, index }));
+    if (decreasing) ordered.reverse();
+    return `<section class="cal-dynamic-panel"><h3>${escapeHtml(title)}</h3><table class="cal-dynamic-table"><thead><tr><th>Gauge PSI</th><th>Standard Output PSI</th><th>% Deviation</th></tr></thead><tbody>${ordered.map(({ point, index }) => {
+      const value = values[index] || "";
+      return `<tr><td>${formatDynamicPoint(point)} PSI</td><td><input data-cal-reading-key="${escapeHtml(key)}" data-cal-reading-index="${index}" data-cal-point="${escapeHtml(String(point))}" value="${escapeHtml(value)}" placeholder="Enter reading"></td><td class="cal-dynamic-deviation" data-cal-deviation>${pressureDeviationText(point, value)}</td></tr>`;
+    }).join("")}</tbody></table></section>`;
+  };
+
+  const renderHydraulicFallbackTable = (title, table, values, unit) => {
+    const rows = CERT_HYDRAULIC_POINTS.map((point, index) => ({ input: point, target: point, output: values[index] || "" }));
+    return `<section class="cal-dynamic-panel"><h3>${escapeHtml(title)}</h3>${table === "asLeft" ? `<label class="cal-dynamic-copy"><input type="checkbox" data-cal-control="copyAsFound" checked>Copy from As Found</label>` : ""}<table class="cal-dynamic-table"><thead><tr><th>Input PSI</th><th>Target PSI</th><th>Output ${escapeHtml(unit)}</th></tr></thead><tbody>${rows.map((row, index) => `<tr><td>${formatDynamicPoint(row.input)}</td><td>${formatDynamicPoint(row.target)}</td><td><input data-cal-torque-table="${table}" data-cal-torque-index="${index}" data-cal-input="${row.input}" data-cal-target="${row.target}" value="${escapeHtml(row.output)}" placeholder="Output ${escapeHtml(unit)}"></td></tr>`).join("")}</tbody></table><div class="cal-dynamic-graph" data-cal-dynamic-graph="${table}"></div></section>`;
+  };
+
+  const renderManualFallbackTable = (title, table, points, values, unit) => {
+    return `<section class="cal-dynamic-panel"><h3>${escapeHtml(title)}</h3>${table === "asLeft" ? `<label class="cal-dynamic-copy"><input type="checkbox" data-cal-control="copyAsFound" checked>Copy from As Found</label>` : ""}<table class="cal-dynamic-table"><thead><tr><th>Target ${escapeHtml(unit)}</th><th>Input ${escapeHtml(unit)}</th><th>Output ${escapeHtml(unit)}</th></tr></thead><tbody>${points.map((point, index) => `<tr><td>${formatDynamicPoint(point)}</td><td>${formatDynamicPoint(point)}</td><td><input data-cal-torque-table="${table}" data-cal-torque-index="${index}" data-cal-input="${point}" data-cal-target="${point}" value="${escapeHtml(values[index] || "")}" placeholder="Output ${escapeHtml(unit)}"></td></tr>`).join("")}</tbody></table><div class="cal-dynamic-graph" data-cal-dynamic-graph="${table}"></div></section>`;
+  };
+
+  const renderDynamicCalibrationFallback = (form, section, template, previousSection) => {
+    const type = normalizeTemplateType(template.type);
+    const oldRange = previousSection?.querySelector("[data-cal-control='range']")?.value || labelInput(form, "Pressure rating")?.value || "";
+    const oldCapacity = previousSection?.querySelector("[data-cal-control='capacity']")?.value || "";
+    const oldUnit = previousSection?.querySelector("[data-cal-control='unit']")?.value || template.unit || template.rangeLabel || templateDefaultUnit(type);
+    const oldAccuracy = previousSection?.querySelector("[data-cal-control='accuracy']")?.value || template.defaultAccuracy || templateDefaultAccuracy(type);
+    const includePassFail = previousSection?.querySelector("[data-cal-control='includePassFail']")?.checked ?? readPassFailPreference();
+    const copyAsFound = previousSection?.querySelector("[data-cal-control='copyAsFound']")?.checked ?? true;
+    const pressureValues = {
+      asFoundInc: dynamicSectionValues(previousSection, "asFoundInc"),
+      asLeftInc: dynamicSectionValues(previousSection, "asLeftInc"),
+      asFoundDec: dynamicSectionValues(previousSection, "asFoundDec"),
+      asLeftDec: dynamicSectionValues(previousSection, "asLeftDec"),
+    };
+    const torqueValues = {
+      asFound: dynamicTorqueValues(previousSection, "asFound"),
+      asLeft: dynamicTorqueValues(previousSection, "asLeft"),
+    };
+    section.id = "cal-data-section";
+    section.className = "calibrio-dynamic-fallback";
+    section.dataset.calTemplateType = type;
+    section.dataset.calUnit = oldUnit;
+    if (isHydraulicTorqueTemplateType(type)) {
+      section.innerHTML = `<div class="cal-data-controls"><label>Unit<select data-cal-control="unit">${torqueUnitOptionsHtml(oldUnit)}</select></label><label>Accuracy / Tolerance<input data-cal-control="accuracy" value="${escapeHtml(oldAccuracy)}" placeholder="\u00b14.0%"></label></div><div class="cal-dynamic-grid">${renderHydraulicFallbackTable("As Found - PSI to Torque", "asFound", torqueValues.asFound, oldUnit)}${renderHydraulicFallbackTable("As Left - PSI to Torque", "asLeft", copyAsFound ? torqueValues.asFound : torqueValues.asLeft, oldUnit)}</div>`;
+      const copy = section.querySelector("[data-cal-control='copyAsFound']");
+      if (copy) copy.checked = copyAsFound;
+      updateDynamicFallbackGraphs(section);
+      return;
+    }
+    if (isManualTorqueTemplateType(type)) {
+      const capacity = oldCapacity || template.capacity || CERT_DEFAULT_TORQUE_CAPACITY;
+      const points = manualFallbackPoints(capacity, template);
+      section.innerHTML = `<div class="cal-data-controls"><label>Capacity<input type="number" step="any" data-cal-control="capacity" value="${escapeHtml(capacity)}" placeholder="250"></label><label>Unit<select data-cal-control="unit">${torqueUnitOptionsHtml(oldUnit)}</select></label><label>Accuracy / Tolerance<input data-cal-control="accuracy" value="${escapeHtml(oldAccuracy)}" placeholder="\u00b14.0%"></label></div><div class="cal-dynamic-grid">${renderManualFallbackTable("As Found", "asFound", points, torqueValues.asFound, oldUnit)}${renderManualFallbackTable("As Left", "asLeft", points, copyAsFound ? torqueValues.asFound : torqueValues.asLeft, oldUnit)}</div>`;
+      const copy = section.querySelector("[data-cal-control='copyAsFound']");
+      if (copy) copy.checked = copyAsFound;
+      updateDynamicFallbackGraphs(section);
+      return;
+    }
+    const range = oldRange || CERT_DEFAULT_PRESSURE_RANGE;
+    const unit = template.unit || template.rangeLabel || "PSI";
+    const points = pressureFallbackPoints(range, template);
+    section.innerHTML = `<div class="cal-data-controls"><label>UUT Range / Capacity<input type="number" step="any" data-cal-control="range" value="${escapeHtml(range)}" placeholder="10000"></label><label>Accuracy / Tolerance<input data-cal-control="accuracy" value="${escapeHtml(oldAccuracy)}" placeholder="\u00b11.0%"></label><label class="cal-check"><input type="checkbox" data-cal-control="includePassFail"${includePassFail ? " checked" : ""}>Pass / Fail statement</label></div><div class="cal-dynamic-grid">${renderPressureFallbackTable("As Found Increasing", "asFoundInc", points, pressureValues.asFoundInc)}${renderPressureFallbackTable("As Left Increasing", "asLeftInc", points, pressureValues.asLeftInc)}${renderPressureFallbackTable("As Found Decreasing", "asFoundDec", points, pressureValues.asFoundDec, true)}${renderPressureFallbackTable("As Left Decreasing", "asLeftDec", points, pressureValues.asLeftDec, true)}</div>`;
+    setControlledValue(labelInput(form, "Unit of measure"), unit);
+    setControlledValue(labelInput(form, "Pressure rating"), range);
+    setControlledValue(labelInput(form, "Allowed +/- %"), String(accuracyPercentValue(oldAccuracy, 1)));
+  };
+
+  const repairCalibrationDataFallback = () => {
+    const form = document.querySelector("form.calibration-modal");
+    if (!form) return;
+    if (form.querySelector("#cal-data-section:not(.calibrio-dynamic-fallback)")) return;
+    const oldPressureSection = form.querySelector(".pressure-section");
+    const hasOldReadingGroups = !!form.querySelector(".reading-input-groups");
+    if (!oldPressureSection && !hasOldReadingGroups && !/NEW CALIBRATION|LINKED CALIBRATION|Edit calibration|Add calibration/i.test(form.textContent || "")) return;
+    ensureCalibrationDataFallbackStyle();
+    if (oldPressureSection) {
+      oldPressureSection.style.display = "none";
+      oldPressureSection.querySelectorAll("[required]").forEach((input) => {
+        input.dataset.calibrioWasRequired = "1";
+        input.required = false;
+      });
+    }
+    form.querySelector(".calibrio-passfail-fallback")?.remove();
+    const template = resolveDynamicTemplateForForm(form);
+    const type = normalizeTemplateType(template.type);
+    const range = form.querySelector("[data-cal-control='range']")?.value || labelInput(form, "Pressure rating")?.value || "";
+    const capacity = form.querySelector("[data-cal-control='capacity']")?.value || "";
+    const unit = form.querySelector("[data-cal-control='unit']")?.value || template.unit || template.rangeLabel || templateDefaultUnit(type);
+    const signature = [template.id, template.primaryProcedure, type, range, capacity, unit].join("|");
+    let section = form.querySelector(".calibrio-dynamic-fallback");
+    if (section?.dataset.calSignature === signature) return;
+    const previousSection = section;
+    if (!section) {
+      section = document.createElement("section");
+      const submitButton = [...form.querySelectorAll("button")].find((button) => /save calibration|save changes/i.test(button.textContent || ""));
+      if (oldPressureSection) oldPressureSection.parentElement?.insertBefore(section, oldPressureSection);
+      else if (submitButton) submitButton.parentElement?.insertBefore(section, submitButton);
+      else form.appendChild(section);
+    }
+    section.dataset.calSignature = signature;
+    renderDynamicCalibrationFallback(form, section, template, previousSection);
+  };
+
   const ensurePassFailFallback = () => {
     ensurePassFailColumnStyle(document);
+    if (document.querySelector("form.calibration-modal .calibrio-dynamic-fallback")) {
+      document.querySelector(".calibrio-passfail-fallback")?.remove();
+      applyPassFailPreferenceToDocument(document);
+      return;
+    }
     const readingGroups = document.querySelector(".reading-input-groups");
     if (!readingGroups) return;
     const nativeControl = document.querySelector(".calibration-passfail-control");
@@ -1508,6 +1922,7 @@
   const applyPreviewAssets = () => {
     applyLogoToDocument(document);
     applyWatermarkToDocument(document);
+    repairCalibrationDataFallback();
     ensurePassFailFallback();
   };
 
@@ -1775,7 +2190,7 @@
   const CERT_TYPE_OPTIONS = [
     ["pressure_gauge", "Pressure Gauge"],
     ["pressure_transducer", "Pressure Transducer"],
-    ["torque", "Hydraulic Torque"],
+    ["hydraulic_torque", "Hydraulic Torque"],
     ["manual_torque", "Manual Torque Wrench"],
     ["electrical", "Electrical"],
     ["dimensional", "Dimensional"],
@@ -1783,7 +2198,10 @@
     ["other", "Other"],
   ];
   const CERT_DEFAULT_PRESSURE_RANGE = 10000;
-  const CERT_DEFAULT_TORQUE_FACTOR = 1;
+  const CERT_DEFAULT_TORQUE_CAPACITY = 250;
+  const CERT_TORQUE_UNITS = ["FTLB", "IN/LBS", "LBS", "TON", "KG", "NM", "cNM", "PSI"];
+  const CERT_PERCENT_POINTS = [20, 40, 60, 80, 100];
+  const CERT_HYDRAULIC_POINTS = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000];
 
   const splitTemplateAliases = (value) => {
     if (Array.isArray(value)) return value.map((item) => String(item || "").trim()).filter(Boolean);
@@ -1797,7 +2215,7 @@
     const normalized = String(value || "pressure_gauge").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
     if (!normalized || normalized === "pressure") return "pressure_gauge";
     if (/manual.*torque|torque.*manual/.test(normalized)) return "manual_torque";
-    if (/hydraulic.*torque|torque|ftlb|ft_lb|ft_lbs/.test(normalized)) return "torque";
+    if (/hydraulic.*torque|torque|ftlb|ft_lb|ft_lbs/.test(normalized)) return "hydraulic_torque";
     if (/pressure.*transducer|transducer/.test(normalized)) return "pressure_transducer";
     if (/pressure.*gauge|gauge/.test(normalized)) return "pressure_gauge";
     return CERT_TYPE_OPTIONS.some(([option]) => option === normalized) ? normalized : "other";
@@ -1817,11 +2235,13 @@
     asLeftDec: requires?.asLeftDec !== false,
   });
 
-  const isTorqueTemplateType = (type) => ["torque", "manual_torque"].includes(normalizeTemplateType(type));
+  const isTorqueTemplateType = (type) => ["hydraulic_torque", "manual_torque"].includes(normalizeTemplateType(type));
+  const isManualTorqueTemplateType = (type) => normalizeTemplateType(type) === "manual_torque";
+  const isHydraulicTorqueTemplateType = (type) => normalizeTemplateType(type) === "hydraulic_torque";
   const isPressureTemplateType = (type) => ["pressure_gauge", "pressure_transducer"].includes(normalizeTemplateType(type));
 
-  const templateDefaultPoints = (type) => isTorqueTemplateType(type) ? 10 : 5;
-  const templateDefaultUnit = (type) => isTorqueTemplateType(type) ? "PSI / FTLB" : "PSI";
+  const templateDefaultPoints = (type) => isHydraulicTorqueTemplateType(type) ? 10 : 5;
+  const templateDefaultUnit = (type) => isTorqueTemplateType(type) ? "FTLB" : "PSI";
   const templateDefaultAccuracy = (type) => isTorqueTemplateType(type) ? "\u00b14.0%" : "\u00b11.0%";
 
   const formatTemplatePoint = (value) => {
@@ -1867,15 +2287,21 @@
   const pressurePointValues = (template) => {
     const points = normalizeTemplatePoints(template?.points ?? template?.testPoints, 5);
     const range = Number(template?.rangeMax || CERT_DEFAULT_PRESSURE_RANGE);
-    const step = range / points;
-    const values = Array.from({ length: points }, (_, index) => step * (index + 1));
+    const percents = Array.isArray(template?.percentPoints) && template.percentPoints.length ? template.percentPoints : CERT_PERCENT_POINTS.slice(0, points);
+    const values = percents.map((percent) => range * Number(percent) / 100);
     return template?.includeZero ? [0, ...values] : values;
   };
 
-  const torquePointValues = (template) => {
+  const hydraulicTorquePointValues = (template) => {
     const points = normalizeTemplatePoints(template?.points ?? template?.testPoints, 10);
-    const step = Number(template?.torqueStep || 1000);
-    return Array.from({ length: points }, (_, index) => step * (index + 1));
+    return (Array.isArray(template?.fixedPoints) && template.fixedPoints.length ? template.fixedPoints : CERT_HYDRAULIC_POINTS).slice(0, points);
+  };
+
+  const manualTorquePointValues = (template) => {
+    const points = normalizeTemplatePoints(template?.points ?? template?.testPoints, 5);
+    const capacity = Number(template?.capacity || CERT_DEFAULT_TORQUE_CAPACITY);
+    const percents = Array.isArray(template?.percentPoints) && template.percentPoints.length ? template.percentPoints : CERT_PERCENT_POINTS.slice(0, points);
+    return percents.map((percent) => capacity * Number(percent) / 100);
   };
 
   const pressureRows = (template, decreasing = false) => {
@@ -1888,19 +2314,28 @@
     }));
   };
 
-  const torqueRows = (template, tableName = "As Found") => {
-    const values = torquePointValues(template);
-    if (/conversion|pressure.*torque/i.test(tableName)) {
-      return values.map((psi) => ({
-        "Pressure PSI": formatTemplatePoint(psi),
-        "Torque FTLBS": "",
-      }));
-    }
-    return values.map((psi) => ({
-      "Target FTLB": "",
+  const hydraulicTorqueRows = (template) => {
+    const unit = String(template?.unit || template?.rangeLabel || "FTLB");
+    return hydraulicTorquePointValues(template).map((psi) => ({
       "Input PSI": formatTemplatePoint(psi),
-      "Output FTLB": "",
+      "Target PSI": formatTemplatePoint(psi),
+      [`Output ${unit}`]: "",
     }));
+  };
+
+  const manualTorqueRows = (template) => {
+    const unit = String(template?.unit || template?.rangeLabel || "FTLB");
+    return manualTorquePointValues(template).map((target) => ({
+      [`Target ${unit}`]: formatTemplatePoint(target),
+      [`Input ${unit}`]: formatTemplatePoint(target),
+      [`Output ${unit}`]: "",
+    }));
+  };
+
+  const torqueRows = (template) => {
+    if (isManualTorqueTemplateType(template?.type)) return manualTorqueRows(template);
+    if (isHydraulicTorqueTemplateType(template?.type)) return hydraulicTorqueRows(template);
+    return [];
   };
 
   const buildPressureTemplateTables = (template) => {
@@ -1914,29 +2349,21 @@
     ];
   };
 
-  const buildTorqueTemplateTables = (template) => [
-    {
-      name: "As Found - PSI to Torque",
-      columns: ["Target FTLB", "Input PSI", "Output FTLB"],
-      rows: torqueRows(template, "As Found - PSI to Torque"),
-      formulas: "PSI IN creates Torque OUT",
-      autoGenerated: true,
-    },
-    {
-      name: "As Left - PSI to Torque",
-      columns: ["Target FTLB", "Input PSI", "Output FTLB"],
-      rows: torqueRows(template, "As Left - PSI to Torque"),
-      formulas: "PSI IN creates Torque OUT",
-      autoGenerated: true,
-    },
-    {
-      name: "Pressure vs Torque Conversion Chart",
-      columns: ["Pressure PSI", "Torque FTLBS"],
-      rows: torqueRows(template, "Pressure vs Torque Conversion Chart"),
-      formulas: `Torque = PSI * factor (${CERT_DEFAULT_TORQUE_FACTOR})`,
-      autoGenerated: true,
-    },
-  ];
+  const buildTorqueTemplateTables = (template) => {
+    const unit = String(template?.unit || template?.rangeLabel || "FTLB");
+    if (isManualTorqueTemplateType(template?.type)) {
+      const columns = [`Target ${unit}`, `Input ${unit}`, `Output ${unit}`];
+      return [
+        { name: "As Found", columns, rows: manualTorqueRows(template), formulas: "Target/Input = Capacity x 20/40/60/80/100%, Output is user input", autoGenerated: true },
+        { name: "As Left", columns, rows: manualTorqueRows(template), formulas: "Copy from As Found by default unless manually changed", autoGenerated: true },
+      ];
+    }
+    const columns = ["Input PSI", "Target PSI", `Output ${unit}`];
+    return [
+      { name: "As Found - PSI to Torque", columns, rows: hydraulicTorqueRows(template), formulas: "Input PSI and Target PSI are fixed 1000-10000; Output is user input", autoGenerated: true },
+      { name: "As Left - PSI to Torque", columns, rows: hydraulicTorqueRows(template), formulas: "Copy from As Found by default unless manually changed", autoGenerated: true },
+    ];
+  };
 
   const defaultTablesForTemplate = (template) => isTorqueTemplateType(template?.type)
     ? buildTorqueTemplateTables(template)
@@ -1949,6 +2376,7 @@
     normalizeTemplatePoints(template?.points ?? template?.testPoints, templateDefaultPoints(template?.type)),
     template?.includeZero === true ? "zero" : "no-zero",
     String(template?.rangeLabel || template?.unit || ""),
+    String(template?.capacity || ""),
   ].join("|");
 
   const defaultCertificateTemplate = (overrides = {}) => {
@@ -1967,6 +2395,10 @@
       includeZero: false,
       defaultAccuracy: templateDefaultAccuracy(type),
       requires: { asFoundInc: true, asFoundDec: true, asLeftInc: true, asLeftDec: true },
+      capacity: isManualTorqueTemplateType(type) ? CERT_DEFAULT_TORQUE_CAPACITY : "",
+      percentPoints: CERT_PERCENT_POINTS,
+      fixedPoints: isHydraulicTorqueTemplateType(type) ? CERT_HYDRAULIC_POINTS : [],
+      calc: isManualTorqueTemplateType(type) ? "percentOfCapacity 20,40,60,80,100" : isHydraulicTorqueTemplateType(type) ? "fixedList 1000-10000" : "percentOfRange 20,40,60,80,100",
       description: "",
       customTables: [],
       showGraph: isTorqueTemplateType(type),
@@ -1991,6 +2423,10 @@
     testPoints: "",
     includeZero: false,
     defaultAccuracy: "",
+    capacity: "",
+    percentPoints: CERT_PERCENT_POINTS,
+    fixedPoints: [],
+    calc: "",
     requires: { asFoundInc: false, asFoundDec: false, asLeftInc: false, asLeftDec: false },
     description: "",
     customTables: [],
@@ -2000,7 +2436,7 @@
 
   const pressurePresetTemplate = (id = "CERT-001") => defaultCertificateTemplate({
     id,
-    name: "Pressure Gauge",
+    name: "WS-WP-CRT-004 - Pressure Gauge",
     primaryProcedure: "WS-WP-CRT-004",
     aliases: ["WS-WP-7.2", "CRT-004", "WS-WP-CRT-004_rev_002"],
     type: "pressure_gauge",
@@ -2011,45 +2447,83 @@
     testPoints: 5,
     includeZero: false,
     defaultAccuracy: "\u00b11.0%",
+    percentPoints: CERT_PERCENT_POINTS,
+    fixedPoints: [],
+    calc: "percentOfRange 20,40,60,80,100",
     requires: { asFoundInc: true, asFoundDec: true, asLeftInc: true, asLeftDec: true },
     description: "",
     showGraph: false,
   });
 
-  const torquePresetTemplate = (id = "CERT-001") => defaultCertificateTemplate({
+  const hydraulicTorquePresetTemplate = (id = "CERT-002") => defaultCertificateTemplate({
     id,
     name: "WS-WP-CRT-004 - Hydraulic Torque",
-    primaryProcedure: "WS-WP-CRT-006",
-    aliases: ["WS-WP-CRT-006", "Hydraulic Torque"],
-    type: "torque",
-    rev: "",
-    rangeLabel: "PSI / FTLB",
-    unit: "PSI / FTLB",
+    primaryProcedure: "WS-WP-CRT-004 - Hydraulic Torque",
+    aliases: ["Hydraulic Torque", "CRT-004 Hydraulic"],
+    type: "hydraulic_torque",
+    rev: "002",
+    rangeLabel: "FTLB",
+    unit: "FTLB",
     points: 10,
     testPoints: 10,
     includeZero: false,
     defaultAccuracy: "\u00b14.0%",
+    fixedPoints: CERT_HYDRAULIC_POINTS,
+    percentPoints: [],
+    calc: "fixedList 1000-10000",
     requires: { asFoundInc: true, asFoundDec: false, asLeftInc: true, asLeftDec: false },
     description: "PSI IN creates Torque OUT.",
     showGraph: true,
   });
 
+  const manualTorquePresetTemplate = (id = "CERT-003") => defaultCertificateTemplate({
+    id,
+    name: "WS-WP-CRT-006 - Manual Torque Wrench",
+    primaryProcedure: "WS-WP-CRT-006 - Manual Torque Wrench",
+    aliases: ["WS-WP-CRT-006", "Manual Torque Wrench", "CRT-006 Manual"],
+    type: "manual_torque",
+    rev: "006",
+    rangeLabel: "FTLB",
+    unit: "FTLB",
+    capacity: CERT_DEFAULT_TORQUE_CAPACITY,
+    points: 5,
+    testPoints: 5,
+    includeZero: false,
+    defaultAccuracy: "\u00b14.0%",
+    percentPoints: CERT_PERCENT_POINTS,
+    fixedPoints: [],
+    calc: "percentOfCapacity 20,40,60,80,100",
+    requires: { asFoundInc: true, asFoundDec: false, asLeftInc: true, asLeftDec: false },
+    description: "Manual torque wrench capacity-based template.",
+    showGraph: true,
+  });
+
+  const defaultCertificateTemplates = () => [
+    pressurePresetTemplate("CERT-001"),
+    hydraulicTorquePresetTemplate("CERT-002"),
+    manualTorquePresetTemplate("CERT-003"),
+  ];
+
   const templateForPreset = (preset, id = "CERT-001") => {
     if (preset === "pressure") return pressurePresetTemplate(id);
-    if (preset === "torque") return torquePresetTemplate(id);
+    if (preset === "hydraulic_torque") return hydraulicTorquePresetTemplate(id);
+    if (preset === "manual_torque") return manualTorquePresetTemplate(id);
     return blankCertificateTemplate(id);
   };
 
   const normalizeCertificateTemplate = (template, index = 0) => {
     const sourceText = `${template?.type || ""} ${template?.name || ""} ${template?.primaryProcedure || ""} ${(template?.aliases || []).toString()}`;
-    const type = normalizeTemplateType(template?.type || (/torque|ft.?lb/i.test(sourceText) ? "torque" : /pressure|gauge|WS-WP-CRT-004/i.test(sourceText) ? "pressure_gauge" : "other"));
+    const type = normalizeTemplateType(template?.type || (/manual.*torque|torque.*wrench/i.test(sourceText) ? "manual_torque" : /torque|ft.?lb/i.test(sourceText) ? "hydraulic_torque" : /pressure|gauge|WS-WP-CRT-004/i.test(sourceText) ? "pressure_gauge" : "other"));
     const defaultPoints = templateDefaultPoints(type);
     const points = normalizeTemplatePoints(template?.points ?? template?.testPoints, defaultPoints);
     const rangeLabel = String(template?.rangeLabel || template?.unit || templateDefaultUnit(type));
+    const capacity = isManualTorqueTemplateType(type) ? Number(template?.capacity || CERT_DEFAULT_TORQUE_CAPACITY) : "";
+    const fixedPoints = Array.isArray(template?.fixedPoints) && template.fixedPoints.length ? template.fixedPoints.map(Number).filter(Number.isFinite) : isHydraulicTorqueTemplateType(type) ? CERT_HYDRAULIC_POINTS : [];
+    const percentPoints = Array.isArray(template?.percentPoints) && template.percentPoints.length ? template.percentPoints.map(Number).filter(Number.isFinite) : isHydraulicTorqueTemplateType(type) ? [] : CERT_PERCENT_POINTS.slice(0, points);
     const normalized = {
       id: String(template?.id || `CERT-${String(index + 1).padStart(3, "0")}`),
-      name: String(template?.name || template?.certificateName || template?.primaryProcedure || (isTorqueTemplateType(type) ? "Hydraulic Torque" : "Pressure Gauge")),
-      primaryProcedure: String(template?.primaryProcedure || template?.procedure || (isTorqueTemplateType(type) ? "WS-WP-CRT-006" : "WS-WP-CRT-004")).trim(),
+      name: String(template?.name || template?.certificateName || template?.primaryProcedure || (isManualTorqueTemplateType(type) ? "WS-WP-CRT-006 - Manual Torque Wrench" : isHydraulicTorqueTemplateType(type) ? "WS-WP-CRT-004 - Hydraulic Torque" : "WS-WP-CRT-004 - Pressure Gauge")),
+      primaryProcedure: String(template?.primaryProcedure || template?.procedure || (isManualTorqueTemplateType(type) ? "WS-WP-CRT-006 - Manual Torque Wrench" : isHydraulicTorqueTemplateType(type) ? "WS-WP-CRT-004 - Hydraulic Torque" : "WS-WP-CRT-004")).trim(),
       aliases: splitTemplateAliases(template?.aliases),
       type,
       rev: String(template?.rev || template?.revision || ""),
@@ -2060,6 +2534,10 @@
       includeZero: template?.includeZero === true,
       defaultAccuracy: String(template?.defaultAccuracy || template?.accuracy || templateDefaultAccuracy(type)),
       requires: normalizeTemplateRequires(template?.requires),
+      capacity,
+      percentPoints,
+      fixedPoints,
+      calc: String(template?.calc || (isManualTorqueTemplateType(type) ? "percentOfCapacity 20,40,60,80,100" : isHydraulicTorqueTemplateType(type) ? "fixedList 1000-10000" : "percentOfRange 20,40,60,80,100")),
       description: String(template?.description || ""),
       customTables: normalizeCustomTables(template?.customTables),
       showGraph: template?.showGraph === true || isTorqueTemplateType(type) && template?.showGraph !== false,
@@ -2078,6 +2556,18 @@
 
   const cleanCertificateTemplates = (templates) =>
     templates.filter((template) => !isTemporaryQaCertificateTemplate(template));
+
+  const mergeCertificateTemplates = (templates) => {
+    const merged = [];
+    const add = (template, index = 0) => {
+      const normalized = normalizeCertificateTemplate(template, index);
+      const key = String(normalized.primaryProcedure || normalized.name).toLowerCase();
+      if (!merged.some((item) => String(item.primaryProcedure || item.name).toLowerCase() === key)) merged.push(normalized);
+    };
+    cleanCertificateTemplates(templates || []).forEach(add);
+    defaultCertificateTemplates().forEach(add);
+    return merged;
+  };
 
   const nextCertificateTemplateId = (templates) => {
     const nextNumber = templates.reduce((max, template) => {
@@ -2098,7 +2588,7 @@
   const readCertificateTemplates = () => {
     const saved = readJsonArray(CERT_TEMPLATE_KEY);
     if (saved.length) {
-      const normalized = cleanCertificateTemplates(saved.map(normalizeCertificateTemplate));
+      const normalized = mergeCertificateTemplates(saved);
       try {
         localStorage.setItem(CERT_TEMPLATE_KEY, JSON.stringify(normalized));
         localStorage.setItem(LEGACY_CERT_TYPES_KEY, JSON.stringify(legacyTemplateProcedureList(normalized)));
@@ -2109,14 +2599,15 @@
     if (legacy.length) {
       const migrated = legacy.map((procedure, index) => normalizeCertificateTemplate({
         id: `CERT-${String(index + 1).padStart(3, "0")}`,
-        name: procedure === "WS-WP-CRT-004" ? "Pressure Gauge" : procedure,
+        name: procedure === "WS-WP-CRT-004" ? "WS-WP-CRT-004 - Pressure Gauge" : procedure,
         primaryProcedure: procedure,
-        type: /torque|ft.?lb/i.test(procedure) ? "torque" : /pressure|WS-WP-CRT-004/i.test(procedure) ? "pressure_gauge" : "other",
+        type: /manual.*torque|torque.*wrench/i.test(procedure) ? "manual_torque" : /torque|ft.?lb/i.test(procedure) ? "hydraulic_torque" : /pressure|WS-WP-CRT-004/i.test(procedure) ? "pressure_gauge" : "other",
       }, index));
-      persistCertificateTemplates(migrated);
-      return migrated;
+      const merged = mergeCertificateTemplates(migrated);
+      persistCertificateTemplates(merged);
+      return merged;
     }
-    const seeded = [defaultCertificateTemplate()];
+    const seeded = defaultCertificateTemplates();
     persistCertificateTemplates(seeded);
     return seeded;
   };
@@ -2131,6 +2622,33 @@
   const certificateTypeOptionsHtml = (selectedType) => CERT_TYPE_OPTIONS
     .map(([value, label]) => `<option value="${escapeHtml(value)}"${value === normalizeTemplateType(selectedType) ? " selected" : ""}>${escapeHtml(label)}</option>`)
     .join("");
+
+  const torqueUnitOptionsHtml = (selectedUnit) => CERT_TORQUE_UNITS
+    .map((unit) => `<option value="${escapeHtml(unit)}"${String(selectedUnit || "FTLB") === unit ? " selected" : ""}>${escapeHtml(unit)}</option>`)
+    .join("");
+
+  const certificateTemplatePreviewHtml = (template) => {
+    const normalized = normalizeCertificateTemplate(template);
+    const unit = normalized.unit || normalized.rangeLabel || "FTLB";
+    let title = "Pressure Gauge Preview - Range 10000 PSI";
+    let headers = ["Range %", "Gauge PSI"];
+    let rows = CERT_PERCENT_POINTS.map((percent) => [`${percent}%`, `${formatTemplatePoint(CERT_DEFAULT_PRESSURE_RANGE * percent / 100)} PSI`]);
+    if (isHydraulicTorqueTemplateType(normalized.type)) {
+      title = "Hydraulic Torque Preview";
+      headers = ["Input PSI", "Target PSI", `Output ${unit}`];
+      rows = hydraulicTorquePointValues(normalized).map((point) => [formatTemplatePoint(point), formatTemplatePoint(point), ""]);
+    } else if (isManualTorqueTemplateType(normalized.type)) {
+      const capacity = Number(normalized.capacity || CERT_DEFAULT_TORQUE_CAPACITY);
+      title = `Manual Torque Preview - ${formatTemplatePoint(capacity)} ${unit}`;
+      headers = ["Capacity %", `Target / Input ${unit}`, `Output ${unit}`];
+      rows = CERT_PERCENT_POINTS.map((percent) => [`${percent}%`, `${formatTemplatePoint(capacity * percent / 100)} ${unit}`, ""]);
+    }
+    return `<section class="certificate-template-preview" data-calibrio-certificate-template-preview>
+      <h3>${escapeHtml(title)}</h3>
+      <table><thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell || "-")}</td>`).join("")}</tr>`).join("")}</tbody></table>
+    </section>`;
+  };
 
   const ensureCertificateTemplateRuntimeStyles = () => {
     if (document.getElementById("calibrio-certificate-template-runtime-style")) return;
@@ -2158,6 +2676,12 @@
       .certificate-template-requires>div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
       .certificate-template-require-box{border:1px solid #e0e9f2;border-radius:7px;padding:10px;background:#fff}
       .certificate-template-form-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+      .certificate-template-preview{grid-column:1/-1;border:1px solid #d7e3ef;border-radius:8px;background:#fbfdff;margin:4px 0 0;padding:14px}
+      .certificate-template-preview h3{margin:0 0 10px;color:#173a5a;font-size:14px}
+      .certificate-template-preview table{width:100%;border-collapse:collapse;background:#fff}
+      .certificate-template-preview th,.certificate-template-preview td{border:1px solid #d5e1eb;text-align:center;padding:7px;color:#173a5a}
+      .certificate-template-preview th{background:#f4f8fb;color:#58718c;font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+      .flex{display:flex}.gap-2{gap:8px}.px-3{padding-left:12px!important;padding-right:12px!important}.py-1{padding-top:6px!important;padding-bottom:6px!important}.border{border:1px solid #cbd8e5!important}.rounded{border-radius:6px!important}.bg-white{background:#fff!important}.bg-red-600{background:#dc2626!important;border-color:#dc2626!important}.text-white{color:#fff!important}.hover\\:bg-red-700:hover{background:#b91c1c!important;border-color:#b91c1c!important}
       @media (max-width:980px){.certificate-template-drawer,.certificate-template-modal{width:calc(100vw - 24px)!important;min-width:0}.certificate-template-edit-grid,.certificate-template-requires>div{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
@@ -2171,13 +2695,16 @@
         <span>${escapeHtml(label)}</span>
       </label>`;
     const controlLabel = (label, control, extraClass = "") => `<label class="${extraClass}"><span>${escapeHtml(label)}</span>${control}</label>`;
-    const presetHtml = mode === "add" ? `<fieldset class="certificate-template-presets certificate-template-span">
-        <legend>Preset Template</legend>
-        <label><input type="radio" name="preset" value="blank" data-calibrio-certificate-preset checked><span>Blank Template</span></label>
-        <label><input type="radio" name="preset" value="pressure" data-calibrio-certificate-preset><span>Pressure Gauge - WS-WP-CRT-004 style (5 equal points, 4 tables, &plusmn;1.0%)</span></label>
-        <label><input type="radio" name="preset" value="torque" data-calibrio-certificate-preset><span>Hydraulic Torque - WS-WP-CRT-006 style (10 points 1000-10000 PSI -&gt; Torque, graph)</span></label>
-      </fieldset>` : "";
+    const presetHtml = mode === "add" ? `<label class="certificate-template-span"><span>Start from Template</span><select name="preset" data-calibrio-certificate-preset>
+        <option value="blank">Blank</option>
+        <option value="pressure">Pressure Gauge WS-WP-CRT-004</option>
+        <option value="hydraulic_torque">Hydraulic Torque</option>
+        <option value="manual_torque">Manual Torque Wrench WS-WP-CRT-006</option>
+      </select></label>` : "";
     const pointsValue = normalized.points == null ? "" : String(normalized.points);
+    const unitControl = isTorqueTemplateType(normalized.type)
+      ? `<select name="rangeLabel">${torqueUnitOptionsHtml(normalized.rangeLabel || normalized.unit)}</select>`
+      : `<input name="rangeLabel" value="${escapeHtml(normalized.rangeLabel)}" placeholder="PSI">`;
     return `<form data-calibrio-certificate-template-form="${escapeHtml(mode)}" data-certificate-id="${escapeHtml(normalized.id)}">
       <div class="certificate-template-edit-grid">
         ${presetHtml}
@@ -2186,7 +2713,8 @@
         ${controlLabel("Equivalent / Aliases", `<input name="aliases" value="${escapeHtml((normalized.aliases || []).join(", "))}" placeholder="WS-WP-7.2, CRT-004">`)}
         ${controlLabel("Type", `<select name="type">${certificateTypeOptionsHtml(normalized.type)}</select>`)}
         ${controlLabel("Rev", `<input name="rev" value="${escapeHtml(normalized.rev)}" placeholder="002">`)}
-        ${controlLabel("Range / Capacity Label", `<input name="rangeLabel" value="${escapeHtml(normalized.rangeLabel)}" placeholder="PSI, FTLB">`)}
+        ${controlLabel("Range / Capacity Label", unitControl)}
+        ${controlLabel("Capacity (Manual Torque)", `<input name="capacity" type="number" min="0" step="any" value="${escapeHtml(normalized.capacity || "")}" placeholder="250">`)}
         ${controlLabel("Default Accuracy / Tolerance", `<input name="defaultAccuracy" value="${escapeHtml(normalized.defaultAccuracy)}" placeholder="&plusmn;1.0%">`)}
         ${controlLabel("Number of Test Points", `<input name="points" type="number" min="1" step="1" value="${escapeHtml(pointsValue)}">`)}
         <label class="certificate-template-check-inline"><input type="checkbox" name="includeZero"${normalized.includeZero ? " checked" : ""}><span>Include Zero Reading?</span></label>
@@ -2195,6 +2723,7 @@
           <div>${requirementLabels.map(([key, label]) => requireCheck(key, label)).join("")}</div>
         </fieldset>
         ${controlLabel("Description / Template notes", `<textarea name="description" placeholder="Template notes">${escapeHtml(normalized.description)}</textarea>`, "certificate-template-span")}
+        ${certificateTemplatePreviewHtml(normalized)}
       </div>
       <footer class="certificate-template-form-actions">
         <button type="submit" class="primary">Save Certificate</button>
@@ -2253,7 +2782,7 @@
     const rows = (conversion?.rows || []).map((row) => {
       const x = Number(String(row["Pressure PSI"] || row["Input PSI"] || "").replace(/,/g, ""));
       const y = Number(String(row["Torque FTLBS"] || row["Torque FTLB"] || row["Output FTLB"] || "").replace(/,/g, ""));
-      return { x, y: Number.isFinite(y) && y > 0 ? y : x * CERT_DEFAULT_TORQUE_FACTOR };
+      return { x, y: Number.isFinite(y) && y > 0 ? y : x };
     }).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
     if (rows.length < 2) return `<div class="certificate-graph-placeholder">Add at least two torque rows to preview the graph.</div>`;
     const width = 560;
@@ -2333,6 +2862,10 @@
       testPoints: points,
       includeZero: form.elements.includeZero?.checked === true,
       defaultAccuracy: form.elements.defaultAccuracy?.value?.trim() || templateDefaultAccuracy(type),
+      capacity: form.elements.capacity?.value?.trim() || "",
+      percentPoints: isHydraulicTorqueTemplateType(type) ? [] : CERT_PERCENT_POINTS,
+      fixedPoints: isHydraulicTorqueTemplateType(type) ? CERT_HYDRAULIC_POINTS : [],
+      calc: isManualTorqueTemplateType(type) ? "percentOfCapacity 20,40,60,80,100" : isHydraulicTorqueTemplateType(type) ? "fixedList 1000-10000" : "percentOfRange 20,40,60,80,100",
       requires: {
         asFoundInc: form.elements.asFoundInc?.checked === true,
         asFoundDec: form.elements.asFoundDec?.checked === true,
@@ -2532,7 +3065,7 @@
     const body = h1?.closest(".body");
     if (!body) return;
     if (body.dataset.calibrioCertificateLibrary === "1" && !force) return;
-    const templates = filteredCertificateTemplates();
+    const templates = readCertificateTemplates();
     const rows = templates.map((template) => `<tr class="certificate-template-row" data-calibrio-certificate-template-action="view" data-certificate-id="${escapeHtml(template.id)}">
       <td>${escapeHtml(template.id)}</td>
       <td>${escapeHtml(template.name)}</td>
@@ -2542,16 +3075,16 @@
       <td>${escapeHtml(template.includeZero ? `${template.points} + zero` : template.points)}</td>
       <td>${escapeHtml(template.defaultAccuracy || "-")}</td>
       <td>${escapeHtml(template.rev || "-")}</td>
-      <td><div class="certificate-template-actions"><button type="button" class="secondary" data-calibrio-certificate-template-action="edit" data-certificate-id="${escapeHtml(template.id)}">Edit</button><button type="button" class="danger-solid" data-calibrio-certificate-template-action="delete" data-certificate-id="${escapeHtml(template.id)}">Delete</button></div></td>
+      <td><div class="flex gap-2 certificate-library-actions"><button type="button" class="px-3 py-1 border rounded bg-white" data-calibrio-certificate-template-action="edit" data-certificate-id="${escapeHtml(template.id)}">Edit</button><button type="button" class="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700" data-calibrio-certificate-template-action="delete" data-certificate-id="${escapeHtml(template.id)}">Delete</button></div></td>
     </tr>`).join("");
     body.dataset.calibrioCertificateLibrary = "1";
     body.innerHTML = `<div class="title">
       <div><small>CERTIFICATE SETUP</small><h1>Certificate Library - Master list of certificate templates</h1><p>Manage template rules that drive calibration entry.</p></div>
       <button type="button" class="primary" data-calibrio-certificate-template-action="add">+ Add Certificate</button>
     </div>
-    <section class="panel certificate-template-library">
-      <div class="asset-list-toolbar"><div><b>${templates.length} certificate${templates.length === 1 ? "" : "s"}</b></div><input data-calibrio-certificate-template-search value="${escapeHtml(state.certificateTemplateSearch)}" placeholder="Search certificates..."></div>
-      <table><thead><tr>${["Cert ID", "Cert Name", "Primary Procedure", "Aliases", "Type", "Points", "Default Accuracy", "Rev", "Actions"].map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows || `<tr><td colspan="9" class="empty">No certificate templates found.</td></tr>`}</tbody></table>
+    <section class="panel asset-panel certificate-library-panel">
+      <div class="asset-toolbar"><div><b>${templates.length} certificate${templates.length === 1 ? "" : "s"}</b></div><span></span></div>
+      <div class="table"><table class="asset-table certificate-library-table"><thead><tr>${["Cert ID", "Cert Name", "Primary Procedure", "Aliases", "Type", "Points", "Default Accuracy", "Rev", "Actions"].map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows || `<tr><td colspan="9" class="empty">No certificate templates found.</td></tr>`}</tbody></table></div>
     </section>`;
   };
 
@@ -2637,11 +3170,14 @@
     setCertificateFormValue(form.elements.type, template.type);
     setCertificateFormValue(form.elements.rev, template.rev);
     setCertificateFormValue(form.elements.rangeLabel, template.rangeLabel);
+    setCertificateFormValue(form.elements.capacity, template.capacity || "");
     setCertificateFormValue(form.elements.defaultAccuracy, template.defaultAccuracy);
     setCertificateFormValue(form.elements.points, template.points);
     setCertificateFormValue(form.elements.includeZero, template.includeZero);
     for (const [key] of requirementLabels) setCertificateFormValue(form.elements[key], template.requires?.[key] === true);
     setCertificateFormValue(form.elements.description, template.description);
+    const preview = form.querySelector("[data-calibrio-certificate-template-preview]");
+    if (preview) preview.outerHTML = certificateTemplatePreviewHtml(template);
   };
 
   const handleCertificateTemplateAction = (action, id, trigger = null) => {
@@ -2670,7 +3206,7 @@
     if (action === "delete") {
       if (!window.confirm(`Delete certificate template ${id}?`)) return;
       const templates = readCertificateTemplates().filter((item) => item.id !== id);
-      persistCertificateTemplates(templates.length ? templates : [defaultCertificateTemplate()]);
+      persistCertificateTemplates(templates.length ? templates : defaultCertificateTemplates());
       state.activeCertificateTemplateId = "";
       renderCertificateTemplateDrawer();
       renderCertificatesTemplateLibrary(true);
@@ -2747,6 +3283,181 @@
     }
   };
 
+  const selectedCertificateProcedure = (form, template) => {
+    const select = labelInput(form, "Certificate type") || form.querySelector("select");
+    return String(select?.value || selectedOptionText(select) || template.primaryProcedure || template.name || "").trim();
+  };
+
+  const collectDynamicFallbackRecord = (form, section) => {
+    const template = resolveDynamicTemplateForForm(form);
+    const type = normalizeTemplateType(template.type);
+    const certificateType = selectedCertificateProcedure(form, template);
+    const existingId = (form.textContent || "").match(/CAL-\d+/i)?.[0] || "";
+    const id = existingId || nextCalibrationId();
+    const createdAt = labelInput(form, "Calibration date")?.value || new Date().toLocaleDateString();
+    const interval = labelInput(form, "Calibration interval")?.value || "12";
+    const customInterval = labelInput(form, "Custom interval")?.value || "";
+    const dueDate = addMonthsToDateText(createdAt, interval, customInterval);
+    const standardId = labelInput(form, "Standard used")?.value || "";
+    const customer = labelInput(form, "Customer")?.value || "";
+    const assetId = labelInput(form, "Asset used")?.value || "";
+    const asset = loadAssets().find((item) => item.id === assetId);
+    const serialNumber = labelInput(form, "Serial number")?.value || asset?.serialNumber || "";
+    const unit = section.querySelector("[data-cal-control='unit']")?.value || template.unit || template.rangeLabel || templateDefaultUnit(type);
+    const accuracy = section.querySelector("[data-cal-control='accuracy']")?.value || template.defaultAccuracy || templateDefaultAccuracy(type);
+    const maximum = String(accuracyPercentValue(accuracy, isTorqueTemplateType(type) ? 4 : 1));
+    const base = {
+      id,
+      certificateType,
+      procedure: certificateType,
+      certificateId: template.id,
+      certificateTemplateType: type,
+      createdAt,
+      calDate: createdAt,
+      interval,
+      customInterval,
+      dueDate,
+      standardId,
+      standardUsed: standardId,
+      customer,
+      assetId,
+      assetUsed: assetId,
+      serialNumber,
+      model: asset?.model || labelInput(form, "Model")?.value || "",
+      unit,
+      accuracy,
+      maximum,
+      includePassFail: section.querySelector("[data-cal-control='includePassFail']")?.checked === true,
+      copyAsFoundToAsLeft: section.querySelector("[data-cal-control='copyAsFound']")?.checked !== false,
+    };
+    if (isHydraulicTorqueTemplateType(type)) {
+      const asFound = tableRowsFromTorqueInputs(section, "asFound", type);
+      const asLeft = tableRowsFromTorqueInputs(section, "asLeft", type);
+      return {
+        ...base,
+        readsType: "Hydraulic Torque",
+        pressureRating: "10000",
+        data: { asFound, asLeft, asFoundTorque: asFound, asLeftTorque: asLeft },
+      };
+    }
+    if (isManualTorqueTemplateType(type)) {
+      const capacity = section.querySelector("[data-cal-control='capacity']")?.value || template.capacity || "";
+      const asFound = tableRowsFromTorqueInputs(section, "asFound", type);
+      const asLeft = tableRowsFromTorqueInputs(section, "asLeft", type);
+      return {
+        ...base,
+        readsType: "Manual Torque",
+        capacity,
+        pressureRating: capacity,
+        data: { asFound, asLeft, asFoundTorque: asFound, asLeftTorque: asLeft },
+      };
+    }
+    const range = section.querySelector("[data-cal-control='range']")?.value || "";
+    const data = {
+      asFoundInc: tableRowsFromPressureInputs(section, "asFoundInc"),
+      asLeftInc: tableRowsFromPressureInputs(section, "asLeftInc"),
+      asFoundDec: tableRowsFromPressureInputs(section, "asFoundDec"),
+      asLeftDec: tableRowsFromPressureInputs(section, "asLeftDec"),
+    };
+    return {
+      ...base,
+      readsType: "Pressure",
+      range,
+      pressureRating: range,
+      data,
+      readings: data.asFoundInc.map((row) => row.standard || ""),
+      asLeftIncreasing: data.asLeftInc.map((row) => row.standard || ""),
+      asFoundDecreasing: data.asFoundDec.map((row) => row.standard || ""),
+      asLeftDecreasing: data.asLeftDec.map((row) => row.standard || ""),
+    };
+  };
+
+  const validateDynamicFallbackRecord = (record) => {
+    if (!record.standardId || !record.customer || !record.assetId || !record.serialNumber || !record.createdAt || !record.dueDate) {
+      window.alert("Complete Certificate type, date, interval, standard, customer, asset, and serial number before saving.");
+      return false;
+    }
+    if (record.readsType === "Pressure") {
+      const missing = !record.range || ["asFoundInc", "asLeftInc", "asFoundDec", "asLeftDec"].some((key) =>
+        (record.data?.[key] || []).some((row) => String(row.standard || "").trim() === ""));
+      if (missing) {
+        window.alert("Enter the UUT range and all required Standard Output readings before saving.");
+        return false;
+      }
+    }
+    if (record.readsType === "Manual Torque" && !record.capacity) {
+      window.alert("Enter the torque wrench capacity before saving.");
+      return false;
+    }
+    return true;
+  };
+
+  const saveDynamicFallbackCalibration = (form, section) => {
+    const record = collectDynamicFallbackRecord(form, section);
+    if (!validateDynamicFallbackRecord(record)) return;
+    const records = loadCalibrationRecords();
+    const previous = records.find((item) => item.id === record.id);
+    const next = previous ? records.map((item) => item.id === record.id ? record : item) : [...records, record];
+    saveJsonArray("calibrio-calibrations", next);
+    syncStoredAssetCalibrationHistory(new Set([record.assetId, previous?.assetId].filter(Boolean)));
+    form.querySelector(".x")?.click();
+    window.setTimeout(() => {
+      ensureCalibrationDeleteButtons();
+      fillOpenAssetModalCalibrationFields();
+      ensureAssetIdDetailButtons();
+      applyCalibrationIdSearch();
+    }, 50);
+  };
+
+  document.addEventListener("input", (event) => {
+    const section = event.target?.closest?.(".calibrio-dynamic-fallback");
+    if (!section) return;
+    const target = event.target;
+    if (target.matches("[data-cal-reading-key]")) {
+      if (target.dataset.calReadingKey !== "asFoundInc") target.dataset.manualOverride = "1";
+      updatePressureDeviationCells(section, target);
+      if (target.dataset.calReadingKey === "asFoundInc") mirrorPressureFallback(section, target.dataset.calReadingIndex, target.value);
+      return;
+    }
+    if (target.matches("[data-cal-torque-table]")) {
+      if (target.dataset.calTorqueTable === "asLeft") target.dataset.manualOverride = "1";
+      if (target.dataset.calTorqueTable === "asFound") mirrorTorqueFallback(section, target.dataset.calTorqueIndex, target.value);
+      updateDynamicFallbackGraphs(section);
+      return;
+    }
+    if (target.matches("[data-cal-control='range']")) setControlledValue(labelInput(target.closest("form"), "Pressure rating"), target.value);
+    if (target.matches("[data-cal-control='accuracy']")) setControlledValue(labelInput(target.closest("form"), "Allowed +/- %"), String(accuracyPercentValue(target.value, 1)));
+  }, true);
+
+  document.addEventListener("change", (event) => {
+    const form = event.target?.closest?.("form.calibration-modal");
+    if (!form) return;
+    const section = form.querySelector(".calibrio-dynamic-fallback");
+    if (event.target === labelInput(form, "Certificate type") || event.target.matches("[data-cal-control='range'],[data-cal-control='capacity'],[data-cal-control='unit']")) {
+      if (section) section.dataset.calSignature = "";
+      window.setTimeout(repairCalibrationDataFallback, 0);
+      return;
+    }
+    if (section && event.target.matches("[data-cal-control='copyAsFound']")) {
+      if (event.target.checked) {
+        for (const input of section.querySelectorAll("[data-cal-torque-table='asFound']")) {
+          mirrorTorqueFallback(section, input.dataset.calTorqueIndex, input.value);
+        }
+      }
+      updateDynamicFallbackGraphs(section);
+    }
+  }, true);
+
+  document.addEventListener("submit", (event) => {
+    const form = event.target?.closest?.("form.calibration-modal");
+    const section = form?.querySelector?.(".calibrio-dynamic-fallback");
+    if (!form || !section) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    saveDynamicFallbackCalibration(form, section);
+  }, true);
+
   document.addEventListener("submit", (event) => {
     const form = event.target?.closest?.("[data-calibrio-certificate-template-form]");
     if (!form) return;
@@ -2764,7 +3475,7 @@
 
   document.addEventListener("change", (event) => {
     const preset = event.target?.closest?.("[data-calibrio-certificate-preset]");
-    if (!preset || !preset.checked) return;
+    if (!preset) return;
     applyCertificatePresetToForm(preset);
   }, true);
 

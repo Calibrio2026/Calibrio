@@ -5458,6 +5458,22 @@ var blankCalibration = () => ({
 	interval: "12",
 	customInterval: "",
 	dueDate: "",
+	certificateId: "",
+	range: "",
+	capacity: "",
+	accuracy: "",
+	copyAsFoundToAsLeft: true,
+	data: {
+		asFoundInc: [],
+		asFoundDec: [],
+		asLeftInc: [],
+		asLeftDec: [],
+		asFound: [],
+		asLeft: [],
+		asFoundTorque: [],
+		asLeftTorque: [],
+		conversionChart: []
+	},
 	readingOverrides: blankReadingOverrides()
 });
 var normalizeReadings = (values, fallback = blankReadings()) => {
@@ -5494,11 +5510,367 @@ var getReadingResult = (point, raw, allowedPercent) => {
 	};
 };
 var formatDeviation = (difference) => Number.isFinite(difference) ? `${difference > 0 ? "+" : ""}${difference.toFixed(2)}%` : "-";
+var CALIBRATION_CERTIFICATE_LIBRARY_KEY = "calibrio-certificates";
+var CALIBRATION_CERTIFICATE_TYPES_KEY = "calibrio-certificate-types";
+var calibrationDataKeys = [
+	"asFoundInc",
+	"asFoundDec",
+	"asLeftInc",
+	"asLeftDec",
+	"asFound",
+	"asLeft",
+	"asFoundTorque",
+	"asLeftTorque",
+	"conversionChart"
+];
+var splitCalibrationAliases = (value) => Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
+var normalizeCalibrationTemplateType = (value) => {
+	const normalized = String(value || "pressure_gauge").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+	if (/manual.*torque|torque.*wrench|crt_006.*manual/.test(normalized)) return "manual_torque";
+	if (/hydraulic.*torque|psi.*torque|crt_004.*hydraulic|torque|ftlb|ft_lbs?/.test(normalized)) return "hydraulic_torque";
+	if (/pressure.*transducer|transducer/.test(normalized)) return "pressure_transducer";
+	if (/pressure|gauge|crt_004/.test(normalized)) return "pressure_gauge";
+	return normalized || "other";
+};
+var torqueUnitOptions = ["FTLB", "IN/LBS", "LBS", "TON", "KG", "NM", "cNM", "PSI"];
+var isManualTorqueCalibrationTemplate = (template) => normalizeCalibrationTemplateType(typeof template === "string" ? template : `${template?.type || ""} ${template?.name || ""} ${template?.primaryProcedure || ""}`).includes("manual_torque");
+var isHydraulicTorqueCalibrationTemplate = (template) => normalizeCalibrationTemplateType(typeof template === "string" ? template : `${template?.type || ""} ${template?.name || ""} ${template?.primaryProcedure || ""}`).includes("hydraulic_torque");
+var isTorqueCalibrationTemplate = (template) => isHydraulicTorqueCalibrationTemplate(template) || isManualTorqueCalibrationTemplate(template);
+var isPressureCalibrationTemplate = (template) => {
+	const type = normalizeCalibrationTemplateType(typeof template === "string" ? template : template?.type || template?.name || template?.primaryProcedure);
+	return type === "pressure_gauge" || type === "pressure_transducer";
+};
+var defaultCalibrationCertificateTemplates = () => [
+	{
+		id: "CERT-001",
+		name: "WS-WP-CRT-004 - Pressure Gauge",
+		primaryProcedure: "WS-WP-CRT-004",
+		aliases: ["WS-WP-7.2", "CRT-004", "WS-WP-CRT-004_rev_002"],
+		type: "pressure_gauge",
+		rev: "002",
+		rangeLabel: "PSI",
+		unit: "PSI",
+		points: 5,
+		testPoints: 5,
+		calc: "percentOfRange",
+		percentPoints: [20, 40, 60, 80, 100],
+		includeZero: false,
+		defaultAccuracy: "\u00b11.0%",
+		requires: { asFoundInc: true, asFoundDec: true, asLeftInc: true, asLeftDec: true },
+		showGraph: false
+	},
+	{
+		id: "CERT-002",
+		name: "WS-WP-CRT-004 - Hydraulic Torque",
+		primaryProcedure: "WS-WP-CRT-004 - Hydraulic Torque",
+		aliases: ["Hydraulic Torque", "CRT-004 Hydraulic"],
+		type: "hydraulic_torque",
+		rev: "002",
+		rangeLabel: "FTLB",
+		unit: "FTLB",
+		points: 10,
+		testPoints: 10,
+		calc: "fixedList",
+		fixedPoints: [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
+		includeZero: false,
+		defaultAccuracy: "\u00b14.0%",
+		requires: { asFoundInc: true, asFoundDec: false, asLeftInc: true, asLeftDec: false },
+		showGraph: true
+	},
+	{
+		id: "CERT-003",
+		name: "WS-WP-CRT-006 - Manual Torque Wrench",
+		primaryProcedure: "WS-WP-CRT-006 - Manual Torque Wrench",
+		aliases: ["Manual Torque Wrench", "CRT-006 Manual", "WS-WP-CRT-006"],
+		type: "manual_torque",
+		rev: "006",
+		rangeLabel: "FTLB",
+		unit: "FTLB",
+		capacity: "250",
+		points: 5,
+		testPoints: 5,
+		calc: "percentOfCapacity",
+		percentPoints: [20, 40, 60, 80, 100],
+		includeZero: false,
+		defaultAccuracy: "\u00b14.0%",
+		requires: { asFoundInc: true, asFoundDec: false, asLeftInc: true, asLeftDec: false },
+		showGraph: true
+	}
+];
+var normalizeCalibrationTemplate = (template, index = 0) => {
+	const source = `${template?.type || ""} ${template?.name || ""} ${template?.primaryProcedure || ""} ${splitCalibrationAliases(template?.aliases).join(" ")}`;
+	const type = normalizeCalibrationTemplateType(template?.type || source);
+	const hydraulicTorque = type === "hydraulic_torque";
+	const manualTorque = type === "manual_torque";
+	const torque = hydraulicTorque || manualTorque;
+	const points = Number.parseInt(String(template?.points ?? template?.testPoints ?? (hydraulicTorque ? 10 : 5)), 10);
+	const primaryProcedure = String(template?.primaryProcedure || template?.procedure || (manualTorque ? "WS-WP-CRT-006 - Manual Torque Wrench" : hydraulicTorque ? "WS-WP-CRT-004 - Hydraulic Torque" : "WS-WP-CRT-004")).trim();
+	return {
+		id: String(template?.id || `CERT-${String(index + 1).padStart(3, "0")}`),
+		name: String(template?.name || template?.certificateName || (manualTorque ? "WS-WP-CRT-006 - Manual Torque Wrench" : hydraulicTorque ? "WS-WP-CRT-004 - Hydraulic Torque" : "WS-WP-CRT-004 - Pressure Gauge")).trim(),
+		primaryProcedure,
+		aliases: [...new Set(splitCalibrationAliases(template?.aliases).filter((alias) => alias.toLowerCase() !== primaryProcedure.toLowerCase()))],
+		type,
+		rev: String(template?.rev || template?.revision || "").trim(),
+		rangeLabel: String(template?.rangeLabel || template?.unit || (torque ? "FTLB" : "PSI")).trim(),
+		unit: String(template?.unit || template?.rangeLabel || (torque ? "FTLB" : "PSI")).trim(),
+		capacity: String(template?.capacity || "").trim(),
+		points: Number.isFinite(points) && points > 0 ? points : hydraulicTorque ? 10 : 5,
+		testPoints: Number.isFinite(points) && points > 0 ? points : hydraulicTorque ? 10 : 5,
+		calc: String(template?.calc || (manualTorque ? "percentOfCapacity" : hydraulicTorque ? "fixedList" : "percentOfRange")).trim(),
+		percentPoints: Array.isArray(template?.percentPoints) && template.percentPoints.length ? template.percentPoints.map(Number).filter(Number.isFinite) : [20, 40, 60, 80, 100],
+		fixedPoints: Array.isArray(template?.fixedPoints) && template.fixedPoints.length ? template.fixedPoints.map(Number).filter(Number.isFinite) : [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
+		includeZero: template?.includeZero === true,
+		defaultAccuracy: String(template?.defaultAccuracy || template?.accuracy || (torque ? "\u00b14.0%" : "\u00b11.0%")).trim(),
+		requires: {
+			asFoundInc: template?.requires?.asFoundInc !== false,
+			asFoundDec: torque ? template?.requires?.asFoundDec === true : template?.requires?.asFoundDec !== false,
+			asLeftInc: template?.requires?.asLeftInc !== false,
+			asLeftDec: torque ? template?.requires?.asLeftDec === true : template?.requires?.asLeftDec !== false
+		},
+		showGraph: template?.showGraph === true || torque && template?.showGraph !== false
+	};
+};
+var mergeCalibrationTemplates = (templates) => {
+	const merged = [];
+	const add = (template, index) => {
+		const normalized = normalizeCalibrationTemplate(template, index);
+		const key = normalized.primaryProcedure.toLowerCase();
+		if (!merged.some((item) => item.primaryProcedure.toLowerCase() === key)) merged.push(normalized);
+	};
+	templates.forEach(add);
+	defaultCalibrationCertificateTemplates().forEach(add);
+	return merged;
+};
+var readCalibrationCertificateTemplates = () => {
+	try {
+		const savedLibrary = localStorage.getItem(CALIBRATION_CERTIFICATE_LIBRARY_KEY);
+		if (savedLibrary) {
+			const parsed = JSON.parse(savedLibrary);
+			if (Array.isArray(parsed) && parsed.length) return mergeCalibrationTemplates(parsed);
+		}
+		const savedLegacy = localStorage.getItem(CALIBRATION_CERTIFICATE_TYPES_KEY);
+		const legacy = savedLegacy ? JSON.parse(savedLegacy) : [];
+		if (Array.isArray(legacy) && legacy.length) return mergeCalibrationTemplates(legacy.map((procedure, index) => ({
+			id: `CERT-${String(index + 1).padStart(3, "0")}`,
+			name: String(procedure || ""),
+			primaryProcedure: String(procedure || "")
+		})));
+	} catch {}
+	return mergeCalibrationTemplates([]);
+};
+var calibrationCertificateOptions = (templates) => {
+	const seen = new Set();
+	return templates.flatMap((template) => [
+		{ value: template.primaryProcedure, label: `${template.primaryProcedure} - ${template.name}`, templateId: template.id },
+		...(template.aliases || []).map((alias) => ({ value: alias, label: `${alias} (alias for ${template.primaryProcedure})`, templateId: template.id }))
+	]).filter((option) => {
+		const key = option.value.toLowerCase();
+		if (!option.value || seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
+};
+var resolveCalibrationCertificateTemplate = (procedure, templates) => {
+	const needle = String(procedure || "").trim().toLowerCase();
+	const found = templates.find((template) => template.primaryProcedure.toLowerCase() === needle || (template.aliases || []).some((alias) => alias.toLowerCase() === needle));
+	if (found) return found;
+	return mergeCalibrationTemplates([]).find((template) => template.primaryProcedure.toLowerCase() === needle) || templates[0] || defaultCalibrationCertificateTemplates()[0];
+};
+var accuracyNumberText = (value) => {
+	const match = String(value || "").match(/-?\d+(\.\d+)?/);
+	return match ? match[0] : "";
+};
+var normalizeCalibrationDataObject = (data) => calibrationDataKeys.reduce((next, key) => ({
+	...next,
+	[key]: Array.isArray(data?.[key]) ? data[key] : []
+}), {});
+var numericText = (value) => String(value ?? "").replace(/,/g, "").trim();
+var cleanCalibrationNumber = (value) => {
+	const number = Number(numericText(value));
+	return Number.isFinite(number) ? number : null;
+};
+var formatCalibrationPoint = (value) => Number.isFinite(Number(value)) ? Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 }) : "";
+var pressurePointsForTemplate = (template, rangeValue, decreasing = false) => {
+	const range = cleanCalibrationNumber(rangeValue);
+	if (!range || range <= 0) return [];
+	const points = Math.max(1, Number(template.points || template.testPoints || 5));
+	const generated = Array.from({ length: points }, (_, index) => range / points * (index + 1));
+	const values = template.includeZero ? [0, ...generated] : generated;
+	return decreasing ? [...values].reverse() : values;
+};
+var calculatePressureDeviation = (gauge, standard) => {
+	const gaugeNumber = Number(gauge);
+	const standardNumber = cleanCalibrationNumber(standard);
+	if (!Number.isFinite(gaugeNumber) || standardNumber === null || standard === "") return "";
+	if (gaugeNumber === 0) return standardNumber === 0 ? 0 : "";
+	return (standardNumber - gaugeNumber) / gaugeNumber * 100;
+};
+var legacyReadingForGauge = (values, rangeValue, gauge) => {
+	const range = cleanCalibrationNumber(rangeValue);
+	if (!range) return "";
+	const legacyPoints = buildPressurePoints(range);
+	const index = legacyPoints.findIndex((point) => Math.abs(point - Number(gauge)) < 1e-6);
+	return index >= 0 ? values?.[index] || "" : "";
+};
+var pressureRowsFromForm = (form, template, key) => {
+	const data = normalizeCalibrationDataObject(form.data);
+	const existing = Array.isArray(data[key]) ? data[key] : [];
+	const rangeValue = form.range || form.pressureRating;
+	const points = pressurePointsForTemplate(template, rangeValue, key.toLowerCase().includes("dec"));
+	const legacy = key === "asFoundInc" ? form.readings : key === "asLeftInc" ? form.asLeftIncreasing : key === "asFoundDec" ? form.asFoundDecreasing : form.asLeftDecreasing;
+	return points.map((gauge, index) => {
+		const row = existing[index] || existing.find((item) => Math.abs(Number(item?.gauge) - Number(gauge)) < 1e-6) || {};
+		const standard = row.standard ?? row["Standard Output (PSI)"] ?? legacyReadingForGauge(legacy, rangeValue, gauge);
+		const deviation = calculatePressureDeviation(gauge, standard);
+		return { gauge, standard: String(standard || ""), deviation };
+	});
+};
+var buildPressureDataForForm = (form, template) => ({
+	asFoundInc: pressureRowsFromForm(form, template, "asFoundInc"),
+	asFoundDec: pressureRowsFromForm(form, template, "asFoundDec"),
+	asLeftInc: pressureRowsFromForm(form, template, "asLeftInc"),
+	asLeftDec: pressureRowsFromForm(form, template, "asLeftDec")
+});
+var legacyIndexForGauge = (rangeValue, gauge) => {
+	const range = cleanCalibrationNumber(rangeValue);
+	if (!range) return -1;
+	return buildPressurePoints(range).findIndex((point) => Math.abs(point - Number(gauge)) < 1e-6);
+};
+var pressureDataToLegacyReadings = (data, rangeValue) => {
+	const write = (rows) => {
+		const values = blankReadings();
+		(rows || []).forEach((row) => {
+			const index = legacyIndexForGauge(rangeValue, row.gauge);
+			if (index >= 0) values[index] = String(row.standard || "");
+		});
+		return values;
+	};
+	return {
+		readings: write(data.asFoundInc),
+		asLeftIncreasing: write(data.asLeftInc),
+		asFoundDecreasing: write(data.asFoundDec),
+		asLeftDecreasing: write(data.asLeftDec)
+	};
+};
+var formatTorqueValue = (value) => Number.isFinite(Number(value)) ? Number(value).toLocaleString("en-US", { maximumFractionDigits: 4 }) : "";
+var torquePointsForTemplate = (template) => Array.isArray(template.fixedPoints) && template.fixedPoints.length ? template.fixedPoints : Array.from({ length: Math.max(1, Number(template.points || template.testPoints || 10)) }, (_, index) => (index + 1) * 1000);
+var manualTorqueTargetsForTemplate = (form, template) => {
+	const capacity = cleanCalibrationNumber(form.capacity || template.capacity);
+	if (!capacity || capacity <= 0) return [];
+	const percentages = Array.isArray(template.percentPoints) && template.percentPoints.length ? template.percentPoints : [20, 40, 60, 80, 100];
+	return percentages.map((percent) => capacity * percent / 100);
+};
+var hydraulicTorqueRowsFromForm = (form, template, key) => {
+	const data = normalizeCalibrationDataObject(form.data);
+	const existing = data[key] || data[key === "asFoundTorque" ? "asFound" : "asLeft"] || [];
+	const points = torquePointsForTemplate(template);
+	return points.map((psi, index) => {
+		const row = existing[index] || {};
+		const inputPSI = String(row.inputPSI ?? row.input ?? row["Input PSI"] ?? psi);
+		const targetPSI = String(row.targetPSI ?? row.target ?? row["Target PSI"] ?? psi);
+		const outputFTLB = String(row.outputFTLB ?? row.output ?? row["Output FTLB"] ?? "");
+		return { inputPSI, targetPSI, target: targetPSI, outputFTLB, output: outputFTLB };
+	});
+};
+var manualTorqueRowsFromForm = (form, template, key) => {
+	const data = normalizeCalibrationDataObject(form.data);
+	const existing = data[key] || data[key === "asFound" ? "asFoundTorque" : "asLeftTorque"] || [];
+	return manualTorqueTargetsForTemplate(form, template).map((target, index) => {
+		const row = existing[index] || {};
+		const targetText = String(row.target ?? row.input ?? target);
+		const output = String(row.output ?? row.outputFTLB ?? "");
+		return { target: targetText, input: String(row.input ?? targetText), output, outputFTLB: output };
+	});
+};
+var conversionRowsFromForm = (form, template) => {
+	const existing = normalizeCalibrationDataObject(form.data).conversionChart || [];
+	return torquePointsForTemplate(template).map((psi, index) => ({
+		pressurePSI: String(existing[index]?.pressurePSI ?? existing[index]?.["Pressure PSI"] ?? psi),
+		torqueFTLBS: String(existing[index]?.torqueFTLBS ?? existing[index]?.["Torque FTLBS"] ?? "")
+	}));
+};
+var copyFoundRowsToLeft = (rows) => (rows || []).map((row) => ({ ...row }));
+var buildHydraulicTorqueDataForForm = (form, template) => {
+	const asFound = hydraulicTorqueRowsFromForm(form, template, "asFoundTorque");
+	const asLeft = form.copyAsFoundToAsLeft !== false ? copyFoundRowsToLeft(asFound) : hydraulicTorqueRowsFromForm(form, template, "asLeftTorque");
+	return {
+		asFound,
+		asLeft,
+		asFoundTorque: asFound,
+		asLeftTorque: asLeft,
+		conversionChart: conversionRowsFromForm(form, template)
+	};
+};
+var buildManualTorqueDataForForm = (form, template) => {
+	const asFound = manualTorqueRowsFromForm(form, template, "asFound");
+	const asLeft = form.copyAsFoundToAsLeft !== false ? copyFoundRowsToLeft(asFound) : manualTorqueRowsFromForm(form, template, "asLeft");
+	return {
+		asFound,
+		asLeft,
+		asFoundTorque: asFound,
+		asLeftTorque: asLeft,
+		conversionChart: []
+	};
+};
+var buildCalibrationDataForTemplate = (form, template) => isManualTorqueCalibrationTemplate(template) ? {
+	...normalizeCalibrationDataObject(form.data),
+	...buildManualTorqueDataForForm(form, template)
+} : isHydraulicTorqueCalibrationTemplate(template) ? {
+	...normalizeCalibrationDataObject(form.data),
+	...buildHydraulicTorqueDataForForm(form, template)
+} : {
+	...normalizeCalibrationDataObject(form.data),
+	...buildPressureDataForForm(form, template)
+};
+var calibrationFormHasData = (form) => {
+	const data = normalizeCalibrationDataObject(form.data);
+	return calibrationDataKeys.some((key) => data[key].some((row) => Object.values(row || {}).some((value) => String(value || "").trim()))) || [form.readings, form.asLeftIncreasing, form.asFoundDecreasing, form.asLeftDecreasing].some((values) => (values || []).some((value) => String(value || "").trim()));
+};
+var applyTemplateToCalibrationForm = (current, template, procedure, resetData = false) => {
+	const base = resetData ? {
+		...current,
+		data: normalizeCalibrationDataObject({}),
+		readings: blankReadings(),
+		asLeftIncreasing: blankReadings(),
+		asFoundDecreasing: blankReadings(),
+		asLeftDecreasing: blankReadings(),
+		readingOverrides: blankReadingOverrides()
+	} : current;
+	const rangeValue = base.range || base.pressureRating || (isPressureCalibrationTemplate(template) ? "10000" : "");
+	const capacityValue = base.capacity || template.capacity || "";
+	const next = {
+		...base,
+		certificateType: procedure || template.primaryProcedure,
+		certificateId: template.id,
+		unit: template.unit || template.rangeLabel || base.unit,
+		capacity: capacityValue,
+		accuracy: base.accuracy || template.defaultAccuracy,
+		maximum: base.maximum || accuracyNumberText(template.defaultAccuracy),
+		copyAsFoundToAsLeft: base.copyAsFoundToAsLeft !== false
+	};
+	if (isPressureCalibrationTemplate(template)) {
+		next.range = rangeValue;
+		next.pressureRating = rangeValue;
+		next.data = buildCalibrationDataForTemplate(next, template);
+		return {
+			...next,
+			...pressureDataToLegacyReadings(next.data, rangeValue)
+		};
+	}
+	next.data = buildCalibrationDataForTemplate(next, template);
+	return next;
+};
 var normalizeCalibration = (record) => {
 	const readings = normalizeReadings(record.readings);
 	return {
 		...blankCalibration(),
 		...record,
+		data: normalizeCalibrationDataObject(record.data),
+		range: record.range || record.pressureRating || "",
+		capacity: record.capacity || "",
+		accuracy: record.accuracy || record.defaultAccuracy || "",
+		copyAsFoundToAsLeft: record.copyAsFoundToAsLeft !== false,
 		readings,
 		asLeftIncreasing: normalizeReadings(record.asLeftIncreasing, readings),
 		asFoundDecreasing: normalizeReadings(record.asFoundDecreasing, readings),
@@ -5506,6 +5878,12 @@ var normalizeCalibration = (record) => {
 		includePassFail: record.includePassFail === true,
 		readingOverrides: normalizeReadingOverrides(record.readingOverrides)
 	};
+};
+var calculateCalibrationDueDate = (dateText, interval, customInterval) => {
+	const months = interval === "other" ? Number(customInterval) : Number(interval), date = new Date(dateText);
+	if (!Number.isFinite(months) || months <= 0 || Number.isNaN(date.getTime())) return "";
+	date.setMonth(date.getMonth() + months);
+	return date.toLocaleDateString();
 };
 var inferReadingOverrides = (record) => {
 	const normalized = normalizeCalibration(record);
@@ -6299,6 +6677,400 @@ function openLinkedCalibrationCertificate(record, assets, customers, openPrintDi
 	printWindow.focus();
 	if (openPrintDialog) setTimeout(() => printWindow.print(), 250);
 }
+function LinkedCalibrationEditor({ record, assets, customers, save, close }) {
+	const [form, setForm] = (0, import_react.useState)(() => ({
+		...normalizeCalibration(record),
+		readingOverrides: inferReadingOverrides(record)
+	})), [certificateTypes, setCertificateTypes] = (0, import_react.useState)([record?.certificateType || "WS-WP-CRT-004"]);
+	(0, import_react.useEffect)(() => {
+		try {
+			const savedTypes = localStorage.getItem("calibrio-certificate-types");
+			if (savedTypes) {
+				const parsed = JSON.parse(savedTypes);
+				if (Array.isArray(parsed)) setCertificateTypes([...new Set([record?.certificateType || "WS-WP-CRT-004", "WS-WP-CRT-004", ...parsed.filter((item) => typeof item === "string")])]);
+			}
+		} catch {}
+	}, [record?.certificateType]);
+	const standards = assets.filter((asset) => asset.classification === "Lab Standard");
+	const assetOptions = assets.filter((asset) => asset.classification !== "Lab Standard");
+	const set = (key, value) => setForm((current) => ({
+		...current,
+		[key]: value
+	}));
+	const setReading = (index, value) => setForm((current) => {
+		const normalized = normalizeCalibration(current);
+		const overrides = normalizeReadingOverrides(normalized.readingOverrides);
+		const updateSyncedSet = (key) => normalized[key].map((reading, readingIndex) => readingIndex === index && !overrides[key][index] ? value : reading);
+		return {
+			...current,
+			readings: normalized.readings.map((reading, readingIndex) => readingIndex === index ? value : reading),
+			asLeftIncreasing: updateSyncedSet("asLeftIncreasing"),
+			asFoundDecreasing: updateSyncedSet("asFoundDecreasing"),
+			asLeftDecreasing: updateSyncedSet("asLeftDecreasing"),
+			readingOverrides: overrides
+		};
+	});
+	const setReadingSet = (key, index, value) => setForm((current) => {
+		const normalized = normalizeCalibration(current);
+		const overrides = normalizeReadingOverrides(normalized.readingOverrides);
+		return {
+			...current,
+			[key]: normalized[key].map((reading, readingIndex) => readingIndex === index ? value : reading),
+			readingOverrides: {
+				...overrides,
+				[key]: overrides[key].map((override, overrideIndex) => overrideIndex === index ? true : override)
+			}
+		};
+	});
+	const chooseAsset = (assetId) => {
+		const asset = assetOptions.find((item) => item.id === assetId);
+		setForm((current) => {
+			const assetRange = asset?.pressureRating || asset?.range || asset?.capacity || "";
+			const next = {
+				...current,
+				assetId,
+				customer: asset?.customer || current.customer,
+				model: asset?.model || current.model,
+				serialNumber: asset?.serialNumber || current.serialNumber,
+				range: current.range || assetRange,
+				pressureRating: current.pressureRating || assetRange
+			};
+			const template = resolveCalibrationCertificateTemplate(next.certificateType, certificateTemplates);
+			return isPressureCalibrationTemplate(template) ? applyTemplateToCalibrationForm(next, template, next.certificateType, false) : next;
+		});
+	};
+	const submit = (event) => {
+		event.preventDefault();
+		const dueDate = calculateCalibrationDueDate(form.createdAt, form.interval, form.customInterval);
+		const nextRecord = normalizeCalibration({
+			...form,
+			readingOverrides: normalizeReadingOverrides(form.readingOverrides),
+			createdAt: form.createdAt || (/* @__PURE__ */ new Date()).toLocaleDateString(),
+			dueDate
+		});
+		if (!nextRecord.standardId || !nextRecord.customer || !nextRecord.assetId || !nextRecord.pressureRating || !nextRecord.serialNumber || !nextRecord.createdAt || !dueDate) return;
+		save(nextRecord, record);
+	};
+	const rating = Number(form.pressureRating), allowedPercent = Number(form.maximum), calculatedDueDate = calculateCalibrationDueDate(form.createdAt, form.interval, form.customInterval);
+	const points = buildPressurePoints(rating);
+	const orderedInputPoints = (reverseOrder = false) => {
+		const rows = points.map((point, index) => ({
+			point,
+			index
+		}));
+		return reverseOrder ? rows.reverse() : rows;
+	};
+	const renderReadingInputGroup = ({ title, values, onChange, reverseOrder = false }) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
+		className: "reading-input-group",
+		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { children: title }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "reading-grid",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "reading-heading",
+						children: [
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Test point" }),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Entered reading" })
+						]
+					}),
+					points.length ? orderedInputPoints(reverseOrder).map(({ point, index }) => {
+						const value = values[index] || "", result = getReadingResult(point, value, allowedPercent);
+						return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+							className: "reading-row",
+							children: [
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+									formatTestPoint(point),
+									" ",
+									form.unit
+								] }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+									className: "reading-entry",
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+											value,
+											onChange: (event) => onChange(index, event.target.value),
+											placeholder: "Enter reading",
+											required: true
+										}),
+										result.hasReading && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+											className: "difference",
+											children: formatDeviation(result.difference)
+										}),
+										form.includePassFail === true && result.hasReading && Number.isFinite(allowedPercent) && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+											className: result.inTolerance ? "reading-status pass" : "reading-status fail",
+											"aria-label": result.inTolerance ? "Within allowed tolerance" : "Outside allowed tolerance",
+											children: result.inTolerance ? "PASS" : "FAIL"
+										})
+									]
+								})
+							]
+						}, index);
+					}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						className: "reading-note",
+						children: "Enter a pressure rating to generate zero plus five equal test points."
+					})
+				]
+			})
+		]
+	});
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+		className: "shade linked-calibration-edit-shade",
+		onMouseDown: close,
+		children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", {
+			className: "modal calibration-modal linked-calibration-edit-modal",
+			onMouseDown: (event) => event.stopPropagation(),
+			onSubmit: submit,
+			children: [
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+					type: "button",
+					className: "x",
+					onClick: close,
+					children: "x"
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: "LINKED CALIBRATION" }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h2", { children: [
+					"Edit calibration ",
+					form.id
+				] }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "asset-form-fields",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Certificate type",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", {
+								value: form.certificateType,
+								onChange: (event) => set("certificateType", event.target.value),
+								children: certificateTypes.map((type) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { children: type }, type))
+							})
+						] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Calibration date",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+								value: form.createdAt,
+								onChange: (event) => set("createdAt", event.target.value),
+								placeholder: "MM/DD/YYYY",
+								required: true
+							})
+						] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Calibration interval",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", {
+								value: form.interval,
+								onChange: (event) => set("interval", event.target.value),
+								children: [
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "3", children: "3 months" }),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "6", children: "6 months" }),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "9", children: "9 months" }),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "12", children: "12 months" }),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "other", children: "Other" })
+								]
+							})
+						] }),
+						form.interval === "other" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Custom interval (months)",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+								type: "number",
+								min: "1",
+								value: form.customInterval,
+								onChange: (event) => set("customInterval", event.target.value),
+								required: true
+							})
+						] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Due date",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+								value: calculatedDueDate || "Enter a valid date and interval",
+								readOnly: true
+							})
+						] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Standard used",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", {
+								value: form.standardId,
+								onChange: (event) => set("standardId", event.target.value),
+								required: true,
+								children: [
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+										value: "",
+										children: "Select a Lab Standard"
+									}),
+									standards.map((standard) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("option", {
+										value: standard.id,
+										children: [
+											standard.id,
+											" - ",
+											standard.make || standard.model || "Lab Standard"
+										]
+									}, standard.id))
+								]
+							})
+						] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Customer",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", {
+								value: form.customer,
+								onChange: (event) => set("customer", event.target.value),
+								required: true,
+								children: [
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+										value: "",
+										children: "Select a customer"
+									}),
+									customers.map((customer) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { children: customer.name }, customer.name))
+								]
+							})
+						] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Asset used",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", {
+								value: form.assetId,
+								onChange: (event) => chooseAsset(event.target.value),
+								required: true,
+								children: [
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+										value: "",
+										children: "Select an asset"
+									}),
+									assetOptions.map((asset) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("option", {
+										value: asset.id,
+										children: [
+											asset.id,
+											" - ",
+											asset.make,
+											" ",
+											asset.model
+										]
+									}, asset.id))
+								]
+							})
+						] }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+							"Serial number",
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+								value: form.serialNumber,
+								onChange: (event) => set("serialNumber", event.target.value),
+								required: true
+							})
+						] })
+					]
+				}),
+				form.certificateType === "WS-WP-CRT-004" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
+					className: "pressure-section",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							className: "eyebrow",
+							children: "PRESSURE CERTIFICATE DETAILS"
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "asset-form-fields",
+							children: [
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+									"Unit of measure",
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", {
+										value: form.unit,
+										onChange: (event) => set("unit", event.target.value),
+										children: [
+											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { children: "PSI" }),
+											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { children: "Bar" }),
+											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { children: "kPa" }),
+											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { children: "MPa" })
+										]
+									})
+								] }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+									"Pressure rating",
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+										type: "number",
+										min: "0",
+										step: "any",
+										value: form.pressureRating,
+										onChange: (event) => set("pressureRating", event.target.value),
+										placeholder: "Example: 30000",
+										required: true
+									})
+								] }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+									"Model",
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+										value: form.model,
+										onChange: (event) => set("model", event.target.value),
+										placeholder: "Model number",
+										required: true
+									})
+								] }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+									"Allowed +/- %",
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+										type: "number",
+										min: "0",
+										step: "any",
+										value: form.maximum,
+										onChange: (event) => set("maximum", event.target.value),
+										placeholder: "Example: 0.5",
+										required: true
+									})
+								] }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+									className: "calibration-toggle-field",
+									style: {
+										display: "flex",
+										alignItems: "center",
+										gap: "8px",
+										marginTop: "22px"
+									},
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+											type: "checkbox",
+											checked: form.includePassFail === true,
+											onChange: (event) => set("includePassFail", event.target.checked),
+											style: {
+												width: "auto",
+												margin: 0
+											}
+										}),
+										"Pass / Fail statement on certificate"
+									]
+								})
+							]
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "reading-input-groups",
+							children: [
+								renderReadingInputGroup({
+									title: "As Found Increasing",
+									values: form.readings,
+									onChange: setReading
+								}),
+								renderReadingInputGroup({
+									title: "As Left Increasing",
+									values: form.asLeftIncreasing,
+									onChange: (index, value) => setReadingSet("asLeftIncreasing", index, value)
+								}),
+								renderReadingInputGroup({
+									title: "As Found Decreasing",
+									values: form.asFoundDecreasing,
+									onChange: (index, value) => setReadingSet("asFoundDecreasing", index, value),
+									reverseOrder: true
+								}),
+								renderReadingInputGroup({
+									title: "As Left Decreasing",
+									values: form.asLeftDecreasing,
+									onChange: (index, value) => setReadingSet("asLeftDecreasing", index, value),
+									reverseOrder: true
+								})
+							]
+						})
+					]
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+					className: "primary full",
+					children: "Save Changes"
+				})
+			]
+		})
+	});
+}
 function AssetDetailModal({ asset, history, close, viewCalibration, editCalibration, printCalibration, deleteCalibration }) {
 	const detailRows = [
 		["Asset ID", asset.id],
@@ -6463,7 +7235,7 @@ function AssetDetailModal({ asset, history, close, viewCalibration, editCalibrat
 	});
 }
 function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, columns, setColumns, go }) {
-	const [show, setShow] = (0, import_react.useState)(false), [linkedCalibrations, setLinkedCalibrations] = (0, import_react.useState)([]), [linkedCustomers, setLinkedCustomers] = (0, import_react.useState)([]), [calibrationPreview, setCalibrationPreview] = (0, import_react.useState)(null), [assetDetail, setAssetDetail] = (0, import_react.useState)(null);
+	const [show, setShow] = (0, import_react.useState)(false), [linkedCalibrations, setLinkedCalibrations] = (0, import_react.useState)([]), [linkedCustomers, setLinkedCustomers] = (0, import_react.useState)([]), [calibrationPreview, setCalibrationPreview] = (0, import_react.useState)(null), [assetDetail, setAssetDetail] = (0, import_react.useState)(null), [linkedEditorRecord, setLinkedEditorRecord] = (0, import_react.useState)(null);
 	const [advancedSearch, setAdvancedSearch] = (0, import_react.useState)({
 		id: "",
 		serialNumber: "",
@@ -6582,10 +7354,26 @@ function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, col
 	};
 	const editLinkedCalibration = (record) => {
 		const resolved = resolveLinkedCalibration(record);
-		if (!resolved?.id || resolved.certificateDeleted === true) return;
-		setAssetDetail(null);
+		if (!resolved?.id || resolved.certificateDeleted === true || !Array.isArray(resolved.readings)) return;
 		sessionStorage.setItem("calibrio-open-calibration-id", resolved.id);
 		if (go) go("Calibrations");
+	};
+	const saveLinkedCalibrationEdit = (record, previousRecord) => {
+		const normalizedRecord = normalizeCalibration(record);
+		const previous = previousRecord || linkedCalibrations.find((item) => item.id === normalizedRecord.id);
+		const next = linkedCalibrations.some((item) => item.id === normalizedRecord.id) ? linkedCalibrations.map((item) => item.id === normalizedRecord.id ? normalizedRecord : item) : [...linkedCalibrations, normalizedRecord];
+		setLinkedCalibrations(next);
+		localStorage.setItem("calibrio-calibrations", JSON.stringify(next));
+		const touchedAssetIds = new Set([normalizedRecord.assetId, previous?.assetId].filter(Boolean));
+		const updatedAssets = applyCalibrationHistoryToAssets(allAssets, next, touchedAssetIds);
+		updatedAssets.forEach((updatedAsset) => {
+			const currentAsset = allAssets.find((asset) => asset.id === updatedAsset.id);
+			if (currentAsset) Object.assign(currentAsset, updatedAsset);
+		});
+		localStorage.setItem("calibrio-lab-assets", JSON.stringify(updatedAssets));
+		if (assetDetail?.id) setAssetDetail(updatedAssets.find((asset) => asset.id === assetDetail.id) || assetDetail);
+		if (calibrationPreview?.id === normalizedRecord.id) setCalibrationPreview(normalizedRecord);
+		setLinkedEditorRecord(null);
 	};
 	const deleteLinkedCalibration = (record) => {
 		record = resolveLinkedCalibration(record);
@@ -6602,6 +7390,7 @@ function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, col
 		});
 		localStorage.setItem("calibrio-lab-assets", JSON.stringify(updatedAssets));
 		if (calibrationPreview?.id === record.id) setCalibrationPreview(null);
+		if (linkedEditorRecord?.id === record.id) setLinkedEditorRecord(null);
 		if (assetDetail?.id === record.assetId) setAssetDetail(updatedAssets.find((asset) => asset.id === record.assetId) || null);
 	};
 	const detailAsset = assetDetail ? allAssets.find((asset) => asset.id === assetDetail.id) || assetDetail : null;
@@ -6845,12 +7634,6 @@ function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, col
 				})
 			]
 		}),
-		calibrationPreview && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CertificatePreview, {
-			record: calibrationPreview,
-			assets: allAssets,
-			customers: linkedCustomers,
-			close: () => setCalibrationPreview(null)
-		}),
 		detailAsset && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(AssetDetailModal, {
 			asset: detailAsset,
 			history: calibrationHistoryForAsset(detailAsset),
@@ -6859,15 +7642,31 @@ function List({ title, rows, allRows = rows, allAssets = allRows, add, edit, col
 			editCalibration: editLinkedCalibration,
 			printCalibration: printLinkedCalibration,
 			deleteCalibration: deleteLinkedCalibration
+		}),
+		calibrationPreview && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CertificatePreview, {
+			record: calibrationPreview,
+			assets: allAssets,
+			customers: linkedCustomers,
+			close: () => setCalibrationPreview(null)
+		}),
+		linkedEditorRecord && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(LinkedCalibrationEditor, {
+			record: linkedEditorRecord,
+			assets: allAssets,
+			customers: linkedCustomers,
+			save: saveLinkedCalibrationEdit,
+			close: () => setLinkedEditorRecord(null)
 		})
 	] });
 }
 function CalibrationWorkspace({ assets, onAssetsChange }) {
-	const [records, setRecords] = (0, import_react.useState)([]), [customers, setCustomers] = (0, import_react.useState)([]), [certificateTypes, setCertificateTypes] = (0, import_react.useState)(["WS-WP-CRT-004"]), [editing, setEditing] = (0, import_react.useState)(false), [editingRecordId, setEditingRecordId] = (0, import_react.useState)(null), [preview, setPreview] = (0, import_react.useState)(null), [form, setForm] = (0, import_react.useState)(blankCalibration()), [calibrationSearch, setCalibrationSearch] = (0, import_react.useState)("");
+	const [records, setRecords] = (0, import_react.useState)([]), [customers, setCustomers] = (0, import_react.useState)([]), [certificateTypes, setCertificateTypes] = (0, import_react.useState)(["WS-WP-CRT-004"]), [certificateTemplates, setCertificateTemplates] = (0, import_react.useState)(defaultCalibrationCertificateTemplates().map(normalizeCalibrationTemplate)), [editing, setEditing] = (0, import_react.useState)(false), [editingRecordId, setEditingRecordId] = (0, import_react.useState)(null), [preview, setPreview] = (0, import_react.useState)(null), [form, setForm] = (0, import_react.useState)(blankCalibration()), [calibrationSearch, setCalibrationSearch] = (0, import_react.useState)("");
 	(0, import_react.useEffect)(() => {
 		try {
 			let loadedRecords = [];
-			const savedRecords = localStorage.getItem("calibrio-calibrations"), savedCustomers = localStorage.getItem("calibrio-customers"), savedTypes = localStorage.getItem("calibrio-certificate-types");
+			const savedRecords = localStorage.getItem("calibrio-calibrations"), savedCustomers = localStorage.getItem("calibrio-customers");
+			const loadedTemplates = readCalibrationCertificateTemplates();
+			setCertificateTemplates(loadedTemplates);
+			setCertificateTypes(calibrationCertificateOptions(loadedTemplates).map((option) => option.value));
 			if (savedRecords) {
 				const parsed = JSON.parse(savedRecords);
 				if (Array.isArray(parsed)) {
@@ -6879,25 +7678,17 @@ function CalibrationWorkspace({ assets, onAssetsChange }) {
 				const parsed = JSON.parse(savedCustomers);
 				if (Array.isArray(parsed)) setCustomers(parsed.filter((customer) => typeof customer === "object" && customer !== null && typeof customer.name === "string"));
 			}
-			if (savedTypes) {
-				const parsed = JSON.parse(savedTypes);
-				if (Array.isArray(parsed)) setCertificateTypes([...new Set(["WS-WP-CRT-004", ...parsed.filter((item) => typeof item === "string")])]);
-			}
 			const pendingTemplateRaw = sessionStorage.getItem("calibrio-use-certificate-template");
 			if (pendingTemplateRaw) {
 				sessionStorage.removeItem("calibrio-use-certificate-template");
 				try {
-					const pendingTemplate = JSON.parse(pendingTemplateRaw);
+					const pendingTemplate = normalizeCalibrationTemplate(JSON.parse(pendingTemplateRaw), loadedTemplates.length);
 					const pendingProcedure = String(pendingTemplate?.primaryProcedure || "").trim();
 					if (pendingProcedure) {
-						const accuracyMatch = String(pendingTemplate?.defaultAccuracy || "").match(/-?\d+(\.\d+)?/);
-						setCertificateTypes((current) => [...new Set([pendingProcedure, ...current])]);
-						setForm((current) => ({
-							...current,
-							certificateType: pendingProcedure,
-							unit: pendingTemplate?.unit || current.unit,
-							maximum: accuracyMatch ? accuracyMatch[0] : current.maximum
-						}));
+						const withPending = mergeCalibrationTemplates([pendingTemplate, ...loadedTemplates]);
+						setCertificateTemplates(withPending);
+						setCertificateTypes(calibrationCertificateOptions(withPending).map((option) => option.value));
+						setForm((current) => applyTemplateToCalibrationForm(current, pendingTemplate, pendingProcedure, true));
 						setEditing(true);
 					}
 				} catch {}
@@ -6931,14 +7722,178 @@ function CalibrationWorkspace({ assets, onAssetsChange }) {
 			console.error("Calibrio could not load saved calibration records.", error);
 		}
 	}, []);
-	const standards = assets.filter((asset) => asset.classification === "Lab Standard");
+	const standards = assets.filter((asset) => {
+		if (asset.classification !== "Lab Standard") return false;
+		const status = getCalibrationStatus(asset);
+		return status.daysRemaining !== null && !status.doNotUse;
+	});
 	const assetOptions = assets.filter((asset) => asset.classification !== "Lab Standard");
 	const calibrationSearchNeedle = String(calibrationSearch || "").trim().toLowerCase();
 	const filteredRecords = calibrationSearchNeedle ? records.filter((record) => String(record?.id || "").toLowerCase().includes(calibrationSearchNeedle)) : records;
+	const certificateOptions = calibrationCertificateOptions(certificateTemplates);
+	const selectedTemplate = resolveCalibrationCertificateTemplate(form.certificateType, certificateTemplates);
+	const selectedTemplateIsPressure = isPressureCalibrationTemplate(selectedTemplate);
+	const selectedTemplateIsTorque = isTorqueCalibrationTemplate(selectedTemplate);
+	const selectedTemplateIsHydraulicTorque = isHydraulicTorqueCalibrationTemplate(selectedTemplate);
+	const selectedTemplateIsManualTorque = isManualTorqueCalibrationTemplate(selectedTemplate);
 	const set = (key, value) => setForm((current) => ({
 		...current,
 		[key]: value
 	}));
+	const chooseCertificateType = (procedure) => setForm((current) => {
+		if (procedure === current.certificateType) return current;
+		if (calibrationFormHasData(current) && typeof window !== "undefined" && !window.confirm("Change cert type? Data will reset")) return current;
+		const template = resolveCalibrationCertificateTemplate(procedure, certificateTemplates);
+		return applyTemplateToCalibrationForm(current, template, procedure, true);
+	});
+	const updateRange = (value) => setForm((current) => {
+		const template = resolveCalibrationCertificateTemplate(current.certificateType, certificateTemplates);
+		const next = {
+			...current,
+			range: value,
+			pressureRating: value
+		};
+		if (!isPressureCalibrationTemplate(template)) return next;
+		const data = buildCalibrationDataForTemplate(next, template);
+		return {
+			...next,
+			data,
+			...pressureDataToLegacyReadings(data, value)
+		};
+	});
+	const updateAccuracy = (value) => setForm((current) => ({
+		...current,
+		accuracy: value,
+		maximum: accuracyNumberText(value)
+	}));
+	const updateCapacity = (value) => setForm((current) => {
+		const template = resolveCalibrationCertificateTemplate(current.certificateType, certificateTemplates);
+		const next = {
+			...current,
+			capacity: value
+		};
+		if (!isManualTorqueCalibrationTemplate(template)) return next;
+		return {
+			...next,
+			data: buildCalibrationDataForTemplate(next, template)
+		};
+	});
+	const updateCalibrationUnit = (value) => setForm((current) => ({
+		...current,
+		unit: value
+	}));
+	const setCopyAsFoundToAsLeft = (checked) => setForm((current) => {
+		const template = resolveCalibrationCertificateTemplate(current.certificateType, certificateTemplates);
+		const next = {
+			...current,
+			copyAsFoundToAsLeft: checked
+		};
+		return {
+			...next,
+			data: buildCalibrationDataForTemplate(next, template)
+		};
+	});
+	const setPressureStandard = (key, rowIndex, value) => setForm((current) => {
+		const template = resolveCalibrationCertificateTemplate(current.certificateType, certificateTemplates);
+		const data = buildCalibrationDataForTemplate(current, template);
+		const rows = [...(data[key] || [])];
+		if (!rows[rowIndex]) return current;
+		const gauge = rows[rowIndex].gauge;
+		rows[rowIndex] = {
+			...rows[rowIndex],
+			standard: value,
+			deviation: calculatePressureDeviation(gauge, value)
+		};
+		const nextData = {
+			...data,
+			[key]: rows
+		};
+		const overrides = normalizeReadingOverrides(current.readingOverrides);
+		const legacyIndex = legacyIndexForGauge(current.range || current.pressureRating, gauge);
+		if (key === "asFoundInc") {
+			["asLeftInc", "asFoundDec", "asLeftDec"].forEach((targetKey) => {
+				const overrideKey = targetKey === "asLeftInc" ? "asLeftIncreasing" : targetKey === "asFoundDec" ? "asFoundDecreasing" : "asLeftDecreasing";
+				if (legacyIndex >= 0 && overrides[overrideKey]?.[legacyIndex]) return;
+				const targetRows = [...(nextData[targetKey] || [])];
+				const targetIndex = targetRows.findIndex((row) => Math.abs(Number(row.gauge) - Number(gauge)) < 1e-6);
+				if (targetIndex >= 0) {
+					targetRows[targetIndex] = {
+						...targetRows[targetIndex],
+						standard: value,
+						deviation: calculatePressureDeviation(targetRows[targetIndex].gauge, value)
+					};
+					nextData[targetKey] = targetRows;
+				}
+			});
+		} else if (legacyIndex >= 0) {
+			const overrideKey = key === "asLeftInc" ? "asLeftIncreasing" : key === "asFoundDec" ? "asFoundDecreasing" : "asLeftDecreasing";
+			overrides[overrideKey][legacyIndex] = true;
+		}
+		return {
+			...current,
+			data: nextData,
+			readingOverrides: overrides,
+			...pressureDataToLegacyReadings(nextData, current.range || current.pressureRating)
+		};
+	});
+	const setTorqueCell = (key, rowIndex, field, value) => setForm((current) => {
+		const template = resolveCalibrationCertificateTemplate(current.certificateType, certificateTemplates);
+		const data = buildCalibrationDataForTemplate(current, template);
+		const rows = [...(data[key] || [])];
+		rows[rowIndex] = {
+			...(rows[rowIndex] || {}),
+			[field]: value
+		};
+		if (field === "outputFTLB") rows[rowIndex].output = value;
+		if (field === "output") rows[rowIndex].outputFTLB = value;
+		const nextData = {
+			...data,
+			[key]: rows
+		};
+		const next = {
+			...current,
+			copyAsFoundToAsLeft: key === "asLeft" || key === "asLeftTorque" ? false : current.copyAsFoundToAsLeft,
+			data: nextData
+		};
+		if ((key === "asFound" || key === "asFoundTorque") && current.copyAsFoundToAsLeft !== false) {
+			const copied = copyFoundRowsToLeft(rows);
+			nextData.asLeft = copied;
+			nextData.asLeftTorque = copied;
+		}
+		if (key === "asFound") nextData.asFoundTorque = rows;
+		if (key === "asFoundTorque") nextData.asFound = rows;
+		if (key === "asLeft") nextData.asLeftTorque = rows;
+		if (key === "asLeftTorque") nextData.asLeft = rows;
+		return next;
+	});
+	const addTorqueRow = (key) => setForm((current) => {
+		const template = resolveCalibrationCertificateTemplate(current.certificateType, certificateTemplates);
+		const data = buildCalibrationDataForTemplate(current, template);
+		const rows = [...(data[key] || [])];
+		const previous = cleanCalibrationNumber(rows[rows.length - 1]?.inputPSI) || rows.length * 1000;
+		rows.push({ target: "", inputPSI: String(previous + 1000), outputFTLB: "" });
+		return {
+			...current,
+			data: {
+				...data,
+				[key]: rows
+			}
+		};
+	});
+	const copyAsFoundTorqueToAsLeft = () => setForm((current) => {
+		const template = resolveCalibrationCertificateTemplate(current.certificateType, certificateTemplates);
+		const data = buildCalibrationDataForTemplate(current, template);
+		const rows = isManualTorqueCalibrationTemplate(template) ? data.asFound : data.asFoundTorque;
+		return {
+			...current,
+			copyAsFoundToAsLeft: true,
+			data: {
+				...data,
+				asLeft: copyFoundRowsToLeft(rows),
+				asLeftTorque: copyFoundRowsToLeft(rows)
+			}
+		};
+	});
 	const setReading = (index, value) => setForm((current) => {
 		const normalized = normalizeCalibration(current);
 		const overrides = normalizeReadingOverrides(normalized.readingOverrides);
@@ -6972,33 +7927,67 @@ function CalibrationWorkspace({ assets, onAssetsChange }) {
 	};
 	const add = () => {
 		const nextNumber = records.reduce((highest, record) => Math.max(highest, Number(record.id.replace(/^CAL-/, "")) || 0), 0) + 1;
+		const template = resolveCalibrationCertificateTemplate(certificateOptions[0]?.value || "WS-WP-CRT-004", certificateTemplates);
 		setEditingRecordId(null);
-		setForm({
+		setForm(applyTemplateToCalibrationForm({
 			...blankCalibration(),
 			id: `CAL-${String(nextNumber).padStart(6, "0")}`,
 			createdAt: (/* @__PURE__ */ new Date()).toLocaleDateString()
-		});
+		}, template, certificateOptions[0]?.value || template.primaryProcedure, true));
 		setEditing(true);
 	};
 	const chooseAsset = (assetId) => {
 		const asset = assetOptions.find((item) => item.id === assetId);
-		setForm((current) => ({
-			...current,
-			assetId,
-			customer: asset?.customer || current.customer,
-			model: asset?.model || current.model,
-			serialNumber: asset?.serialNumber || current.serialNumber
-		}));
+		setForm((current) => {
+			const assetRange = asset?.pressureRating || asset?.range || asset?.capacity || "";
+			const next = {
+				...current,
+				assetId,
+				customer: asset?.customer || current.customer,
+				model: asset?.model || current.model,
+				serialNumber: asset?.serialNumber || current.serialNumber,
+				range: current.range || assetRange,
+				pressureRating: current.pressureRating || assetRange,
+				capacity: current.capacity || assetRange
+			};
+			const template = resolveCalibrationCertificateTemplate(next.certificateType, certificateTemplates);
+			return {
+				...next,
+				data: buildCalibrationDataForTemplate(next, template)
+			};
+		});
 	};
 	const save = (event) => {
 		event.preventDefault();
-		const dueDate = calculateDueDate(form.createdAt, form.interval, form.customInterval), record = {
-			...form,
+		const saveTemplate = resolveCalibrationCertificateTemplate(form.certificateType, certificateTemplates);
+		const preparedForm = applyTemplateToCalibrationForm(form, saveTemplate, form.certificateType || saveTemplate.primaryProcedure, false);
+		const dueDate = calculateDueDate(preparedForm.createdAt, preparedForm.interval, preparedForm.customInterval), record = {
+			...preparedForm,
 			readingOverrides: normalizeReadingOverrides(form.readingOverrides),
-			createdAt: form.createdAt || (/* @__PURE__ */ new Date()).toLocaleDateString(),
-			dueDate
+			createdAt: preparedForm.createdAt || (/* @__PURE__ */ new Date()).toLocaleDateString(),
+			calDate: preparedForm.createdAt || (/* @__PURE__ */ new Date()).toLocaleDateString(),
+			dueDate,
+			standardUsed: preparedForm.standardId,
+			assetUsed: preparedForm.assetId,
+			certificateId: saveTemplate.id,
+			accuracy: preparedForm.accuracy || saveTemplate.defaultAccuracy,
+			capacity: preparedForm.capacity || "",
+			range: preparedForm.range || preparedForm.pressureRating || "",
+			data: buildCalibrationDataForTemplate(preparedForm, saveTemplate)
 		};
-		if (!record.standardId || !record.customer || !record.assetId || !record.pressureRating || !record.serialNumber || !record.createdAt || !dueDate) return;
+		if (isPressureCalibrationTemplate(saveTemplate)) {
+			record.pressureRating = record.range;
+			const missingStandardOutput = ["asFoundInc", "asFoundDec", "asLeftInc", "asLeftDec"].some((key) => saveTemplate.requires?.[key] !== false && record.data[key].some((row) => String(row.standard || "").trim() === ""));
+			if (!record.range || missingStandardOutput) {
+				if (typeof window !== "undefined") window.alert("Enter the UUT range and all required Standard Output readings before saving.");
+				return;
+			}
+		}
+		if (isManualTorqueCalibrationTemplate(saveTemplate) && !record.capacity) {
+			if (typeof window !== "undefined") window.alert("Enter the torque wrench capacity before saving.");
+			return;
+		}
+		if (!record.standardId || !record.customer || !record.assetId || !record.serialNumber || !record.createdAt || !dueDate) return;
 		const previousRecord = editingRecordId ? records.find((item) => item.id === editingRecordId) : null;
 		const next = editingRecordId ? records.map((item) => item.id === editingRecordId ? record : item) : [...records, record];
 		setRecords(next);
@@ -7115,6 +8104,248 @@ function CalibrationWorkspace({ assets, onAssetsChange }) {
 				children: "Enter a pressure rating to generate zero plus five equal test points."
 			})]
 		})]
+	});
+	const activeCalibrationData = buildCalibrationDataForTemplate(form, selectedTemplate);
+	const displayDeviation = (value) => Number.isFinite(Number(value)) ? formatDeviation(Number(value)) : "-";
+	const renderPressureDataTable = (title, key) => selectedTemplate.requires?.[key] === false ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
+		className: "calibration-data-card",
+		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { children: title }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("table", {
+			className: "calibration-dynamic-table",
+			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: [
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Gauge PSI" }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Standard Output PSI" }),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "% Deviation" })
+			] }) }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", { children: (activeCalibrationData[key] || []).map((row, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", {
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("td", { children: [
+					formatCalibrationPoint(row.gauge),
+					" PSI"
+				] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+					type: "text",
+					inputMode: "decimal",
+					step: "any",
+					value: row.standard,
+					onChange: (event) => setPressureStandard(key, index, event.target.value),
+					placeholder: "Standard output",
+					required: true
+				}) }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", {
+					className: Number.isFinite(Number(row.deviation)) && Math.abs(Number(row.deviation)) > Number(accuracyNumberText(form.accuracy || selectedTemplate.defaultAccuracy)) ? "fail" : "",
+					children: displayDeviation(row.deviation)
+				})]
+			}, `${selectedTemplate.id}-${key}-${index}`)) })]
+		})]
+	});
+	const graphPointsFromRows = (rows, inputKey, outputKey) => (rows || []).map((row) => ({
+		x: cleanCalibrationNumber(row[inputKey]),
+		y: cleanCalibrationNumber(row[outputKey])
+	})).filter((point) => point.x !== null && point.y !== null);
+	const renderTorqueGraph = (title, rows, unit, inputKey, outputKey, xLabel = "Input", yLabel = "Output") => {
+		const points = graphPointsFromRows(rows, inputKey, outputKey);
+		const width = 620, height = 250, pad = 42;
+		const maxX = Math.max(1, ...points.map((point) => point.x || 0));
+		const maxY = Math.max(maxX, 1, ...points.map((point) => point.y || 0));
+		const toPoints = (values) => values.map((point) => `${(pad + point.x / maxX * (width - pad * 2)).toFixed(1)},${(height - pad - point.y / maxY * (height - pad * 2)).toFixed(1)}`).join(" ");
+		return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
+			className: "calibration-data-card torque-graph-card",
+			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { children: title }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("svg", {
+				viewBox: `0 0 ${width} ${height}`,
+				role: "img",
+				"aria-label": `${title} torque graph`,
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("rect", { x: pad, y: pad, width: width - pad * 2, height: height - pad * 2, className: "torque-graph-bg" }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("line", { x1: pad, y1: height - pad, x2: width - pad, y2: height - pad }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("line", { x1: pad, y1: pad, x2: pad, y2: height - pad }),
+					points.length > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("polyline", { className: "torque-black-line", points: toPoints(points) }),
+					points.map((point, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("circle", {
+						cx: pad + point.x / maxX * (width - pad * 2),
+						cy: height - pad - point.y / maxY * (height - pad * 2),
+						r: 3
+					}, `${title}-${index}`)),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("text", { x: width / 2, y: height - 8, children: [
+						xLabel,
+						unit ? ` ${unit}` : ""
+					] }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("text", { x: 6, y: 18, children: [
+						yLabel,
+						unit ? ` ${unit}` : ""
+					] })
+				]
+			})]
+		});
+	};
+	const renderAsLeftCopyControl = () => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+		className: "calibration-copy-control",
+		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+			type: "checkbox",
+			checked: form.copyAsFoundToAsLeft !== false,
+			onChange: (event) => setCopyAsFoundToAsLeft(event.target.checked)
+		}), "Copy from As Found"]
+	});
+	const renderHydraulicTorqueTable = (title, key) => {
+		const unit = form.unit || selectedTemplate.unit || "FTLB";
+		return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
+			className: "calibration-data-card torque-card",
+			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { children: title }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("table", {
+				className: "calibration-dynamic-table",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Input PSI" }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: "Target PSI" }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("th", { children: [
+						"Output ",
+						unit
+					] })
+				] }) }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", { children: (activeCalibrationData[key] || []).map((row, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", {
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: row.inputPSI, readOnly: true }) }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: row.targetPSI || row.target || row.inputPSI, readOnly: true }) }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+							type: "text",
+							inputMode: "decimal",
+							value: row.outputFTLB || row.output || "",
+							onChange: (event) => setTorqueCell(key, index, "outputFTLB", event.target.value),
+							placeholder: "Output"
+						}) })
+					]
+				}, `${selectedTemplate.id}-${key}-${index}`)) })]
+			})]
+		});
+	};
+	const renderManualTorqueTable = (title, key) => {
+		const unit = form.unit || selectedTemplate.unit || "FTLB";
+		return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
+			className: "calibration-data-card torque-card",
+			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { children: title }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("table", {
+				className: "calibration-dynamic-table",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", { children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("th", { children: [
+						"Target ",
+						unit
+					] }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("th", { children: [
+						"Input ",
+						unit
+					] }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("th", { children: [
+						"Output ",
+						unit
+					] })
+				] }) }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", { children: (activeCalibrationData[key] || []).map((row, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("tr", {
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: formatTorqueValue(row.target), readOnly: true }) }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: formatTorqueValue(row.input), readOnly: true }) }),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+							type: "text",
+							inputMode: "decimal",
+							value: row.output || row.outputFTLB || "",
+							onChange: (event) => setTorqueCell(key, index, "output", event.target.value),
+							placeholder: "Output"
+						}) })
+					]
+				}, `${selectedTemplate.id}-${key}-${index}`)) })]
+			})]
+		});
+	};
+	const renderCalibrationDataSection = () => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
+		id: "cal-data-section",
+		className: "calibration-data-section",
+		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", {
+			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { children: [
+				"Calibration Data - ",
+				selectedTemplate.name,
+				" (",
+				selectedTemplate.points,
+				" points)"
+			] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: selectedTemplate.primaryProcedure })]
+		}), selectedTemplateIsPressure && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "asset-form-fields calibration-data-controls",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["UUT Range / Capacity", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+					type: "number",
+					min: "0",
+					step: "any",
+					value: form.range || form.pressureRating,
+					onChange: (event) => updateRange(event.target.value),
+					placeholder: "Enter range 10000",
+					required: true
+				})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Accuracy / Tolerance", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+					value: form.accuracy || selectedTemplate.defaultAccuracy,
+					onChange: (event) => updateAccuracy(event.target.value),
+					placeholder: selectedTemplate.defaultAccuracy
+				})] })]
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+				className: "calibration-passfail-control",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+					type: "checkbox",
+					checked: form.includePassFail === true,
+					onChange: (event) => set("includePassFail", event.target.checked)
+				}), "Pass / Fail statement on certificate"]
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "calibration-data-grid",
+				children: [
+					renderPressureDataTable("As Found Increasing", "asFoundInc"),
+					renderPressureDataTable("As Left Increasing", "asLeftInc"),
+					renderPressureDataTable("As Found Decreasing", "asFoundDec"),
+					renderPressureDataTable("As Left Decreasing", "asLeftDec")
+				]
+			})
+		] }), selectedTemplateIsHydraulicTorque && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "asset-form-fields calibration-data-controls",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Unit", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", {
+						value: form.unit || selectedTemplate.unit || "FTLB",
+						onChange: (event) => updateCalibrationUnit(event.target.value),
+						children: torqueUnitOptions.map((unit) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+							value: unit,
+							children: unit
+						}, unit))
+					})] }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Accuracy / Tolerance", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+						value: form.accuracy || selectedTemplate.defaultAccuracy,
+						onChange: (event) => updateAccuracy(event.target.value),
+						placeholder: selectedTemplate.defaultAccuracy
+					})] })
+				]
+			}),
+			renderHydraulicTorqueTable("As Found - PSI to Torque", "asFoundTorque"),
+			selectedTemplate.showGraph && renderTorqueGraph("As Found", activeCalibrationData.asFoundTorque, form.unit || selectedTemplate.unit || "FTLB", "inputPSI", "outputFTLB", "Input PSI", "Output"),
+			renderAsLeftCopyControl(),
+			renderHydraulicTorqueTable("As Left - PSI to Torque", "asLeftTorque"),
+			selectedTemplate.showGraph && renderTorqueGraph("As Left", activeCalibrationData.asLeftTorque, form.unit || selectedTemplate.unit || "FTLB", "inputPSI", "outputFTLB", "Input PSI", "Output")
+		] }), selectedTemplateIsManualTorque && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "asset-form-fields calibration-data-controls",
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Capacity", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+						type: "number",
+						min: "0",
+						step: "any",
+						value: form.capacity || "",
+						onChange: (event) => updateCapacity(event.target.value),
+						placeholder: "250"
+					})] }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Unit", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", {
+						value: form.unit || selectedTemplate.unit || "FTLB",
+						onChange: (event) => updateCalibrationUnit(event.target.value),
+						children: torqueUnitOptions.map((unit) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+							value: unit,
+							children: unit
+						}, unit))
+					})] }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Accuracy / Tolerance", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+						value: form.accuracy || selectedTemplate.defaultAccuracy,
+						onChange: (event) => updateAccuracy(event.target.value),
+						placeholder: selectedTemplate.defaultAccuracy
+					})] })
+				]
+			}),
+			renderManualTorqueTable("As Found", "asFound"),
+			selectedTemplate.showGraph && renderTorqueGraph("As Found", activeCalibrationData.asFound, form.unit || selectedTemplate.unit || "FTLB", "input", "output", "Input", "Output"),
+			renderAsLeftCopyControl(),
+			renderManualTorqueTable("As Left", "asLeft"),
+			selectedTemplate.showGraph && renderTorqueGraph("As Left", activeCalibrationData.asLeft, form.unit || selectedTemplate.unit || "FTLB", "input", "output", "Input", "Output")
+		] })]
 	});
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
 		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -7242,8 +8473,11 @@ function CalibrationWorkspace({ assets, onAssetsChange }) {
 						children: [
 							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Certificate type", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", {
 								value: form.certificateType,
-								onChange: (event) => set("certificateType", event.target.value),
-								children: certificateTypes.map((type) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { children: type }, type))
+								onChange: (event) => chooseCertificateType(event.target.value),
+								children: certificateOptions.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+									value: option.value,
+									children: option.label
+								}, option.value))
 							})] }),
 							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Calibration date", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
 								value: form.createdAt,
@@ -7338,104 +8572,7 @@ function CalibrationWorkspace({ assets, onAssetsChange }) {
 							})] })
 						]
 					}),
-					form.certificateType === "WS-WP-CRT-004" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
-						className: "pressure-section",
-						children: [
-							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-								className: "eyebrow",
-								children: "PRESSURE CERTIFICATE DETAILS"
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "asset-form-fields",
-								children: [
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Unit of measure", /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", {
-										value: form.unit,
-										onChange: (event) => set("unit", event.target.value),
-										children: [
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { children: "PSI" }),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { children: "Bar" }),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { children: "kPa" }),
-											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { children: "MPa" })
-										]
-									})] }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Pressure rating", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-										type: "number",
-										min: "0",
-										step: "any",
-										value: form.pressureRating,
-										onChange: (event) => set("pressureRating", event.target.value),
-										placeholder: "Example: 30000",
-										required: true
-									})] }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Model", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-										value: form.model,
-										onChange: (event) => set("model", event.target.value),
-										placeholder: "Model number",
-										required: true
-									})] }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Allowed +/- %", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-										type: "number",
-										min: "0",
-										step: "any",
-										value: form.maximum,
-										onChange: (event) => set("maximum", event.target.value),
-										placeholder: "Example: 0.5",
-										required: true
-									})] }),
-								]
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
-								className: "calibration-passfail-control",
-								style: {
-									display: "flex",
-									alignItems: "center",
-									gap: "10px",
-									margin: "4px 0 14px",
-									padding: "10px 12px",
-									border: "1px solid #cfe0ef",
-									borderRadius: "8px",
-									background: "#f7fbff",
-									fontWeight: 700
-								},
-								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
-									type: "checkbox",
-									checked: form.includePassFail === true,
-									onChange: (event) => set("includePassFail", event.target.checked),
-									style: {
-										width: "auto",
-										margin: 0
-									}
-								}), "Pass / Fail statement on certificate"]
-							}),
-							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "reading-input-groups",
-								children: [
-									renderReadingInputGroup({
-										title: "As Found Increasing",
-										values: form.readings,
-										onChange: setReading
-									}),
-									renderReadingInputGroup({
-										title: "As Left Increasing",
-										values: form.asLeftIncreasing,
-										onChange: (index, value) => setReadingSet("asLeftIncreasing", index, value)
-									}),
-									renderReadingInputGroup({
-										title: "As Found Decreasing",
-										values: form.asFoundDecreasing,
-										onChange: (index, value) => setReadingSet("asFoundDecreasing", index, value),
-										reverseOrder: true
-									}),
-									renderReadingInputGroup({
-										title: "As Left Decreasing",
-										values: form.asLeftDecreasing,
-										onChange: (index, value) => setReadingSet("asLeftDecreasing", index, value),
-										reverseOrder: true
-									})
-								]
-							})
-						]
-					}),
+					renderCalibrationDataSection(),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 						className: "primary full",
 						children: editingRecordId ? "Save Changes" : "Save Calibration"
@@ -7926,7 +9063,8 @@ function CertificateTypes({ go }) {
 	const typeOptions = [
 		{ value: "pressure_gauge", label: "Pressure Gauge" },
 		{ value: "pressure_transducer", label: "Pressure Transducer" },
-		{ value: "torque", label: "Torque" },
+		{ value: "hydraulic_torque", label: "Hydraulic Torque" },
+		{ value: "manual_torque", label: "Manual Torque Wrench" },
 		{ value: "electrical", label: "Electrical" },
 		{ value: "dimensional", label: "Dimensional" },
 		{ value: "temperature", label: "Temperature" },
@@ -7946,10 +9084,13 @@ function CertificateTypes({ go }) {
 		name: "",
 		primaryProcedure: "",
 		aliasesText: "",
+		preset: "blank",
 		type: "pressure_gauge",
 		rev: "",
 		unit: "PSI",
+		capacity: "",
 		testPoints: 5,
+		calc: "percentOfRange",
 		includeZero: false,
 		defaultAccuracy: "\u00B11.0%",
 		requires: { ...defaultRequires },
@@ -7959,6 +9100,8 @@ function CertificateTypes({ go }) {
 	const normalizeType = (value) => {
 		const clean = String(value || "pressure_gauge").trim().toLowerCase().replace(/[\s-]+/g, "_");
 		if (clean === "pressure" || clean === "pressure_gauge_certificate") return "pressure_gauge";
+		if (clean === "torque" || clean === "hydraulic_torque_certificate") return "hydraulic_torque";
+		if (clean === "manual_torque" || clean === "manual_torque_wrench") return "manual_torque";
 		return typeOptions.some((option) => option.value === clean) ? clean : "other";
 	};
 	const displayType = (value) => typeOptions.find((option) => option.value === normalizeType(value))?.label || "Other";
@@ -7979,8 +9122,10 @@ function CertificateTypes({ go }) {
 		const aliases = [...new Set(rawAliases.map((item) => String(item || "").trim()).filter(Boolean).filter((item) => item.toLowerCase() !== primary.toLowerCase()))];
 		const idText = String(template?.id || "").trim();
 		const id = /^CERT-\d+$/i.test(idText) ? idText.toUpperCase() : `CERT-${String(index + 1).padStart(3, "0")}`;
-		const type = normalizeType(template?.type);
+		const type = normalizeType(normalizeCalibrationTemplateType(`${template?.type || ""} ${template?.name || ""} ${template?.primaryProcedure || ""}`));
 		const isDefaultPressure = primary === defaultProcedure || type === "pressure_gauge";
+		const isHydraulicTorque = type === "hydraulic_torque";
+		const isManualTorque = type === "manual_torque";
 		return {
 			id,
 			name: String(template?.name || template?.certificateName || primary || "Certificate Template").trim(),
@@ -7988,11 +9133,17 @@ function CertificateTypes({ go }) {
 			aliases,
 			type,
 			rev: String(template?.rev || "").trim(),
-			unit: String(template?.unit || template?.rangeLabel || (isDefaultPressure ? "PSI" : "")).trim(),
-			testPoints: normalizePointCount(template?.testPoints ?? template?.points, isDefaultPressure ? 5 : 1),
+			unit: String(template?.unit || template?.rangeLabel || (isDefaultPressure ? "PSI" : isHydraulicTorque || isManualTorque ? "FTLB" : "")).trim(),
+			capacity: String(template?.capacity || "").trim(),
+			testPoints: normalizePointCount(template?.testPoints ?? template?.points, isHydraulicTorque ? 10 : isDefaultPressure || isManualTorque ? 5 : 1),
+			points: normalizePointCount(template?.testPoints ?? template?.points, isHydraulicTorque ? 10 : isDefaultPressure || isManualTorque ? 5 : 1),
+			calc: String(template?.calc || (isManualTorque ? "percentOfCapacity" : isHydraulicTorque ? "fixedList" : "percentOfRange")).trim(),
+			percentPoints: Array.isArray(template?.percentPoints) && template.percentPoints.length ? template.percentPoints : [20, 40, 60, 80, 100],
+			fixedPoints: Array.isArray(template?.fixedPoints) && template.fixedPoints.length ? template.fixedPoints : [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
 			includeZero: template?.includeZero === true,
-			defaultAccuracy: String(template?.defaultAccuracy || template?.accuracy || (isDefaultPressure ? "\u00B11.0%" : "")).trim(),
+			defaultAccuracy: String(template?.defaultAccuracy || template?.accuracy || (isDefaultPressure ? "\u00B11.0%" : isHydraulicTorque || isManualTorque ? "\u00B14.0%" : "")).trim(),
 			requires: normalizeRequires(template?.requires),
+			showGraph: template?.showGraph === true || isHydraulicTorque || isManualTorque,
 			description: String(template?.description || "").trim()
 		};
 	};
@@ -8004,10 +9155,20 @@ function CertificateTypes({ go }) {
 			requires: { ...normalized.requires }
 		};
 	};
+	const seedCertificateTemplates = () => defaultCalibrationCertificateTemplates().map((template, index) => normalizeTemplate(template, index));
+	const mergeLibraryTemplates = (records) => {
+		const merged = [];
+		[...records, ...seedCertificateTemplates()].forEach((record, index) => {
+			const normalized = normalizeTemplate(record, index);
+			const key = String(normalized.primaryProcedure || normalized.name).toLowerCase();
+			if (!merged.some((item) => String(item.primaryProcedure || item.name).toLowerCase() === key)) merged.push(normalized);
+		});
+		return merged;
+	};
 	const templatesFromLegacyTypes = (items) => {
 		const strings = Array.isArray(items) ? items.map((item) => typeof item === "string" ? item.trim() : String(item?.primaryProcedure || item?.name || "").trim()).filter(Boolean) : [];
-		const uniqueProcedures = strings.length ? [...new Set(strings)] : [defaultProcedure];
-		return uniqueProcedures.map((procedure, index) => normalizeTemplate({
+		const uniqueProcedures = strings.length ? [...new Set(strings)] : [];
+		const legacyTemplates = uniqueProcedures.map((procedure, index) => normalizeTemplate({
 			id: `CERT-${String(index + 1).padStart(3, "0")}`,
 			name: procedure === defaultProcedure ? "Pressure Gauge - 30K Chart" : procedure,
 			primaryProcedure: procedure,
@@ -8021,6 +9182,7 @@ function CertificateTypes({ go }) {
 			requires: defaultRequires,
 			description: ""
 		}, index));
+		return mergeLibraryTemplates(legacyTemplates);
 	};
 	const nextCertificateId = (records) => {
 		const max = records.reduce((highest, record) => {
@@ -8031,6 +9193,14 @@ function CertificateTypes({ go }) {
 	};
 	const legacyProcedureList = (records) => [...new Set(records.flatMap((record) => [record.primaryProcedure, ...(Array.isArray(record.aliases) ? record.aliases : [])]).map((item) => String(item || "").trim()).filter(Boolean))];
 	const formatPoints = (template) => template.includeZero ? `${template.testPoints} + zero` : String(template.testPoints);
+	const presetOptions = [
+		{ value: "blank", label: "Blank" },
+		...defaultCalibrationCertificateTemplates().map((template) => ({
+			value: template.primaryProcedure,
+			label: template.name,
+			template
+		}))
+	];
 	const [templates, setTemplates] = (0, import_react.useState)([]), [query, setQuery] = (0, import_react.useState)(""), [showModal, setShowModal] = (0, import_react.useState)(false), [editingId, setEditingId] = (0, import_react.useState)(null), [form, setForm] = (0, import_react.useState)(blankTemplate()), [drawerTemplateId, setDrawerTemplateId] = (0, import_react.useState)(null), [drawerTab, setDrawerTab] = (0, import_react.useState)("view");
 	(0, import_react.useEffect)(() => {
 		try {
@@ -8038,7 +9208,7 @@ function CertificateTypes({ go }) {
 			if (savedLibrary) {
 				const parsedLibrary = JSON.parse(savedLibrary);
 				if (Array.isArray(parsedLibrary)) {
-					const normalized = parsedLibrary.map((item, index) => normalizeTemplate(item, index));
+					const normalized = mergeLibraryTemplates(parsedLibrary);
 					setTemplates(normalized);
 					localStorage.setItem(certificateLibraryKey, JSON.stringify(normalized));
 					localStorage.setItem(legacyCertificateTypesKey, JSON.stringify(legacyProcedureList(normalized)));
@@ -8076,6 +9246,21 @@ function CertificateTypes({ go }) {
 		}
 		return next;
 	});
+	const applyPreset = (value) => {
+		const preset = presetOptions.find((option) => option.value === value);
+		if (!preset || value === "blank") {
+			setForm({
+				...blankTemplate(),
+				preset: "blank"
+			});
+			return;
+		}
+		setForm({
+			...templateToForm(normalizeTemplate(preset.template)),
+			id: "",
+			preset: value
+		});
+	};
 	const updateRequires = (key, value) => setForm((current) => ({
 		...current,
 		requires: {
@@ -8145,6 +9330,17 @@ function CertificateTypes({ go }) {
 	const renderFormFields = () => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "asset-form-fields certificate-library-fields certificate-template-fields",
 		children: [
+			showModal && !editingId && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+				className: "certificate-library-wide",
+				children: ["Start from Template", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", {
+					value: form.preset || "blank",
+					onChange: (event) => applyPreset(event.target.value),
+					children: presetOptions.map((preset) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+						value: preset.value,
+						children: preset.label
+					}, preset.value))
+				})]
+			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Certificate Name", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
 				value: form.name,
 				onChange: (event) => updateForm("name", event.target.value),
@@ -8175,6 +9371,14 @@ function CertificateTypes({ go }) {
 				value: form.unit,
 				onChange: (event) => updateForm("unit", event.target.value),
 				placeholder: "PSI"
+			})] }),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Capacity (manual torque preview)", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+				type: "number",
+				min: "0",
+				step: "any",
+				value: form.capacity,
+				onChange: (event) => updateForm("capacity", event.target.value),
+				placeholder: "250"
 			})] }),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Number of Test Points", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
 				type: "number",
@@ -8226,6 +9430,33 @@ function CertificateTypes({ go }) {
 			})
 		]
 	});
+	const renderTemplatePreview = (templateForm = form) => {
+		const template = normalizeTemplate(templateForm);
+		const unit = template.unit || "FTLB";
+		let title = "Calculated Points Preview";
+		let headers = ["Point", "Calculated Value"];
+		let rows = [];
+		if (template.type === "manual_torque") {
+			const capacity = Number(template.capacity || 250);
+			rows = (template.percentPoints || [20, 40, 60, 80, 100]).map((percent) => [`${percent}%`, `${formatTorqueValue(capacity * percent / 100)} ${unit}`]);
+			title = `Manual Torque Preview - ${capacity || 250} ${unit}`;
+			headers = ["Capacity %", `Target / Input ${unit}`];
+		} else if (template.type === "hydraulic_torque") {
+			rows = (template.fixedPoints || [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]).map((point) => [point, point, ""]);
+			title = "Hydraulic Torque Preview";
+			headers = ["Input PSI", "Target PSI", `Output ${unit}`];
+		} else {
+			rows = (template.percentPoints || [20, 40, 60, 80, 100]).map((percent) => [`${percent}%`, `${formatTorqueValue(10000 * percent / 100)} PSI`]);
+			title = "Pressure Gauge Preview - Range 10000 PSI";
+			headers = ["Range %", "Gauge PSI"];
+		}
+		return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", {
+			className: "certificate-template-preview",
+			children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { children: title }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("table", {
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tr", { children: headers.map((header) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("th", { children: header }, header)) }) }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tbody", { children: rows.map((row, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("tr", { children: row.map((cell, cellIndex) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: cell || "-" }, cellIndex)) }, index)) })]
+			})]
+		});
+	};
 	const renderDetail = (template) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
 		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "certificate-template-detail-grid", children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Cert ID" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: template.id })] }),
@@ -8243,6 +9474,7 @@ function CertificateTypes({ go }) {
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Required tables" }),
 			requireOptions.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: normalizeRequires(template.requires)[option.key] ? "is-on" : "is-off", children: [normalizeRequires(template.requires)[option.key] ? "Required" : "Not required", " - ", option.label.replace("Requires ", "")] }, option.key))
 		] }),
+		renderTemplatePreview(templateToForm(template)),
 		template.description && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "certificate-template-description", children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "Description" }), template.description] })
 	] });
 	const searchText = query.trim().toLowerCase();
@@ -8258,7 +9490,7 @@ function CertificateTypes({ go }) {
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: "CERTIFICATE TEMPLATE" }),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Add certificate template" }),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "form-note", children: "Define the certificate rules once. Calibration entry uses these rules when this procedure is selected." }),
-				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", { onSubmit: saveTemplate, children: [renderFormFields(), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary full", children: "Save Certificate" })] })
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", { onSubmit: saveTemplate, children: [renderFormFields(), renderTemplatePreview(), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary full", children: "Save Certificate" })] })
 			]
 		})
 	});
@@ -8284,13 +9516,12 @@ function CertificateTypes({ go }) {
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "primary", onClick: () => useTemplate(selectedTemplate), children: "Use This Certificate" }),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "delete-certificate", onClick: () => deleteTemplate(selectedTemplate), children: "Delete Certificate" })
 				] }),
-				drawerTab === "edit" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", { onSubmit: saveTemplate, children: [renderFormFields(), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "certificate-template-edit-actions", children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", children: "Save" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "secondary", onClick: cancelDrawerEdit, children: "Cancel" })] })] }) : renderDetail(selectedTemplate)
+				drawerTab === "edit" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", { onSubmit: saveTemplate, children: [renderFormFields(), renderTemplatePreview(), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "certificate-template-edit-actions", children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", children: "Save" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "secondary", onClick: cancelDrawerEdit, children: "Cancel" })] })] }) : renderDetail(selectedTemplate)
 			]
 		})
 	});
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
 		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "title", children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: "CERTIFICATE SETUP" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h1", { children: "Certificate Library - Master list of certificate templates" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Manage template rules that drive calibration entry." })] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: openAdd, children: "+ Add Certificate" })] }),
-		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "panel certificate-library-search", children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: ["Search certificates", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: query, onChange: (event) => setQuery(event.target.value), placeholder: "Search certificates..." })] }), query && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "secondary", type: "button", onClick: () => setQuery(""), children: "Clear" })] }),
 		/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "panel asset-panel certificate-library-panel", children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "asset-toolbar", children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("b", { children: [filteredTemplates.length, filteredTemplates.length === 1 ? " certificate" : " certificates"] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "" })] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "" })] }),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "table", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("table", { className: "asset-table certificate-library-table", children: [
@@ -8304,10 +9535,10 @@ function CertificateTypes({ go }) {
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: formatPoints(template) }),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: template.defaultAccuracy || "-" }),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: template.rev || "-" }),
-					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "certificate-library-actions", children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "edit-certificate", onClick: (event) => {
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("td", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "flex gap-2 certificate-library-actions", children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "px-3 py-1 border rounded bg-white", onClick: (event) => {
 						event.stopPropagation();
 						openDrawer(template, "edit");
-					}, children: "Edit" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "delete-certificate", onClick: (event) => {
+					}, children: "Edit" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700", onClick: (event) => {
 						event.stopPropagation();
 						deleteTemplate(template);
 					}, children: "Delete" })] }) })
