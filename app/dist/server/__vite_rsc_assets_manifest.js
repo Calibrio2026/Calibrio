@@ -1,5 +1,5 @@
 export default {
-  "bootstrapScriptContent": "import(\"/assets/index-CalAssetHistory.js?v=calibrio-cert-template-library-20260715-01\");(()=>{const s=document.createElement(\"script\");s.src=\"/assets/calibration-live-guard.js?v=labstandards-20260715-calinputs-liveguard-44\";s.defer=true;document.head.appendChild(s)})();import(\"/assets/calibration-live-guard.js?v=labstandards-20260715-calinputs-liveguard-44\")",
+  "bootstrapScriptContent": "import(\"/assets/index-CalAssetHistory.js?v=calibrio-cert-template-library-20260715-01\")",
   "clientReferenceDeps": {
     "a9bbde40cf2d": {
       "js": [

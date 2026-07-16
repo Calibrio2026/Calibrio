@@ -10,6 +10,7 @@
     certificateTemplateSearch: "",
     activeCertificateTemplateId: "",
     certificateTemplateDrawerMode: "view",
+    certificateTemplateUploadPreview: null,
   };
   const LOGO_URL = new URL("/assets/winshaw-logo.png?v=winshaw-logo-20260713", window.location.origin).href;
   const WATERMARK_URL = new URL("/assets/winshaw-watermark.png?v=winshaw-watermark-20260713", window.location.origin).href;
@@ -1713,7 +1714,7 @@
     if (templateButton) {
       event.preventDefault();
       event.stopPropagation();
-      handleCertificateTemplateAction(templateButton.dataset.calibrioCertificateTemplateAction, templateButton.dataset.certificateId || "");
+      handleCertificateTemplateAction(templateButton.dataset.calibrioCertificateTemplateAction, templateButton.dataset.certificateId || "", templateButton);
       return;
     }
     const assetButton = event.target?.closest?.("[data-calibrio-open-asset]");
@@ -1775,25 +1776,36 @@
   const CERT_TYPE_OPTIONS = [
     ["pressure_gauge", "Pressure Gauge"],
     ["pressure_transducer", "Pressure Transducer"],
-    ["torque", "Torque"],
+    ["torque", "Hydraulic Torque"],
+    ["manual_torque", "Manual Torque Wrench"],
     ["electrical", "Electrical"],
     ["dimensional", "Dimensional"],
     ["temperature", "Temperature"],
     ["other", "Other"],
   ];
+  const CERT_DEFAULT_PRESSURE_RANGE = 10000;
+  const CERT_DEFAULT_TORQUE_FACTOR = 1;
 
-  const splitTemplateAliases = (value) => String(value || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+  const splitTemplateAliases = (value) => {
+    if (Array.isArray(value)) return value.map((item) => String(item || "").trim()).filter(Boolean);
+    return String(value || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  };
 
   const normalizeTemplateType = (value) => {
     const normalized = String(value || "pressure_gauge").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-    if (normalized === "pressure") return "pressure_gauge";
+    if (!normalized || normalized === "pressure") return "pressure_gauge";
+    if (/manual.*torque|torque.*manual/.test(normalized)) return "manual_torque";
+    if (/hydraulic.*torque|torque|ftlb|ft_lb|ft_lbs/.test(normalized)) return "torque";
+    if (/pressure.*transducer|transducer/.test(normalized)) return "pressure_transducer";
+    if (/pressure.*gauge|gauge/.test(normalized)) return "pressure_gauge";
     return CERT_TYPE_OPTIONS.some(([option]) => option === normalized) ? normalized : "other";
   };
 
   const displayTemplateType = (value) => CERT_TYPE_OPTIONS.find(([option]) => option === normalizeTemplateType(value))?.[1] || "Other";
+
   const normalizeTemplatePoints = (value, fallback = 5) => {
     const points = Number.parseInt(String(value || ""), 10);
     return Number.isFinite(points) && points > 0 ? points : fallback;
@@ -1806,42 +1818,205 @@
     asLeftDec: requires?.asLeftDec !== false,
   });
 
-  const defaultCertificateTemplate = () => ({
-    id: "CERT-001",
-    name: "Pressure Gauge",
-    primaryProcedure: "WS-WP-CRT-004",
-    aliases: ["WS-WP-7.2", "CRT-004", "WS-WP-CRT-004_rev_002"],
-    type: "pressure_gauge",
-    rev: "002",
-    unit: "PSI",
-    testPoints: 5,
-    includeZero: false,
-    defaultAccuracy: "\u00b11.0%",
-    requires: { asFoundInc: true, asFoundDec: true, asLeftInc: true, asLeftDec: true },
-    description: "",
-  });
+  const isTorqueTemplateType = (type) => ["torque", "manual_torque"].includes(normalizeTemplateType(type));
+  const isPressureTemplateType = (type) => ["pressure_gauge", "pressure_transducer"].includes(normalizeTemplateType(type));
+
+  const templateDefaultPoints = (type) => isTorqueTemplateType(type) ? 10 : 5;
+  const templateDefaultUnit = (type) => isTorqueTemplateType(type) ? "PSI / FTLB" : "PSI";
+  const templateDefaultAccuracy = (type) => isTorqueTemplateType(type) ? "\u00b14.0%" : "\u00b11.0%";
+
+  const formatTemplatePoint = (value) => {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return String(value || "");
+    return Number.isInteger(number) ? String(number) : number.toFixed(2).replace(/\.?0+$/, "");
+  };
+
+  const coerceTableRows = (rows, columns) => {
+    const safeColumns = columns.length ? columns : ["Point", "Reading"];
+    if (!Array.isArray(rows)) return [];
+    return rows.map((row) => {
+      if (Array.isArray(row)) {
+        return safeColumns.reduce((record, column, index) => {
+          record[column] = row[index] == null ? "" : String(row[index]);
+          return record;
+        }, {});
+      }
+      return safeColumns.reduce((record, column) => {
+        record[column] = row?.[column] == null ? "" : String(row[column]);
+        return record;
+      }, {});
+    });
+  };
+
+  const normalizeCustomTables = (tables) => {
+    if (!Array.isArray(tables)) return [];
+    return tables.map((table, index) => {
+      const columns = Array.isArray(table?.columns)
+        ? table.columns.map((column) => String(column || "").trim()).filter(Boolean)
+        : splitTemplateAliases(table?.columns);
+      const safeColumns = columns.length ? columns : ["Point", "Reading"];
+      return {
+        name: String(table?.name || `Data Table ${index + 1}`).trim(),
+        columns: safeColumns,
+        rows: coerceTableRows(table?.rows, safeColumns),
+        formulas: String(table?.formulas || table?.formula || ""),
+        autoGenerated: table?.autoGenerated === true,
+      };
+    }).filter((table) => table.name);
+  };
+
+  const pressurePointValues = (template) => {
+    const points = normalizeTemplatePoints(template?.points ?? template?.testPoints, 5);
+    const range = Number(template?.rangeMax || CERT_DEFAULT_PRESSURE_RANGE);
+    const step = range / points;
+    const values = Array.from({ length: points }, (_, index) => step * (index + 1));
+    return template?.includeZero ? [0, ...values] : values;
+  };
+
+  const torquePointValues = (template) => {
+    const points = normalizeTemplatePoints(template?.points ?? template?.testPoints, 10);
+    const step = Number(template?.torqueStep || 1000);
+    return Array.from({ length: points }, (_, index) => step * (index + 1));
+  };
+
+  const pressureRows = (template, decreasing = false) => {
+    const values = pressurePointValues(template);
+    const ordered = decreasing ? [...values].reverse() : values;
+    return ordered.map((point) => ({
+      "Gauge PSI": formatTemplatePoint(point),
+      "Standard Output PSI": "",
+      "% Deviation": "",
+    }));
+  };
+
+  const torqueRows = (template, tableName = "As Found") => {
+    const values = torquePointValues(template);
+    if (/conversion|pressure.*torque/i.test(tableName)) {
+      return values.map((psi) => ({
+        "Pressure PSI": formatTemplatePoint(psi),
+        "Torque FTLB": "",
+      }));
+    }
+    return values.map((psi) => ({
+      "Target FTLB": "",
+      "Input PSI": formatTemplatePoint(psi),
+      "Output FTLB": "",
+    }));
+  };
+
+  const buildPressureTemplateTables = (template) => {
+    const columns = ["Gauge PSI", "Standard Output PSI", "% Deviation"];
+    const formula = "Gauge = Range / Points * i; % Deviation = (Standard Output - Gauge) / Gauge * 100";
+    return [
+      { name: "As Found Increasing", columns, rows: pressureRows(template, false), formulas: formula, autoGenerated: true },
+      { name: "As Found Decreasing", columns, rows: pressureRows(template, true), formulas: formula, autoGenerated: true },
+      { name: "As Left Increasing", columns, rows: pressureRows(template, false), formulas: formula, autoGenerated: true },
+      { name: "As Left Decreasing", columns, rows: pressureRows(template, true), formulas: formula, autoGenerated: true },
+    ];
+  };
+
+  const buildTorqueTemplateTables = (template) => [
+    {
+      name: "As Found",
+      columns: ["Target FTLB", "Input PSI", "Output FTLB"],
+      rows: torqueRows(template, "As Found"),
+      formulas: "Output Torque = Input PSI * factor; user may override target and output values.",
+      autoGenerated: true,
+    },
+    {
+      name: "As Left",
+      columns: ["Target FTLB", "Input PSI", "Output FTLB"],
+      rows: torqueRows(template, "As Left"),
+      formulas: "Output Torque = Input PSI * factor; user may override target and output values.",
+      autoGenerated: true,
+    },
+    {
+      name: "Pressure vs Torque Conversion",
+      columns: ["Pressure PSI", "Torque FTLB"],
+      rows: torqueRows(template, "Pressure vs Torque Conversion"),
+      formulas: `Torque = PSI * factor (${CERT_DEFAULT_TORQUE_FACTOR})`,
+      autoGenerated: true,
+    },
+  ];
+
+  const defaultTablesForTemplate = (template) => isTorqueTemplateType(template?.type)
+    ? buildTorqueTemplateTables(template)
+    : buildPressureTemplateTables(template);
+
+  const tablesAreAutoGenerated = (tables) => !Array.isArray(tables) || tables.length === 0 || tables.every((table) => table?.autoGenerated === true);
+
+  const templateShapeKey = (template) => [
+    normalizeTemplateType(template?.type),
+    normalizeTemplatePoints(template?.points ?? template?.testPoints, templateDefaultPoints(template?.type)),
+    template?.includeZero === true ? "zero" : "no-zero",
+    String(template?.rangeLabel || template?.unit || ""),
+  ].join("|");
+
+  const defaultCertificateTemplate = (overrides = {}) => {
+    const type = normalizeTemplateType(overrides.type || "pressure_gauge");
+    const base = {
+      id: "CERT-001",
+      name: isTorqueTemplateType(type) ? "Hydraulic Torque" : "Pressure Gauge",
+      primaryProcedure: isTorqueTemplateType(type) ? "WS-WP-CRT-006" : "WS-WP-CRT-004",
+      aliases: isTorqueTemplateType(type) ? ["WS-WP-CRT-006"] : ["WS-WP-7.2", "CRT-004", "WS-WP-CRT-004_rev_002"],
+      type,
+      rev: isTorqueTemplateType(type) ? "" : "002",
+      rangeLabel: templateDefaultUnit(type),
+      unit: templateDefaultUnit(type),
+      points: templateDefaultPoints(type),
+      testPoints: templateDefaultPoints(type),
+      includeZero: false,
+      defaultAccuracy: templateDefaultAccuracy(type),
+      requires: { asFoundInc: true, asFoundDec: true, asLeftInc: true, asLeftDec: true },
+      description: "",
+      customTables: [],
+      showGraph: isTorqueTemplateType(type),
+    };
+    const merged = { ...base, ...overrides };
+    merged.customTables = Array.isArray(overrides.customTables) && overrides.customTables.length
+      ? normalizeCustomTables(overrides.customTables)
+      : defaultTablesForTemplate(merged);
+    return merged;
+  };
 
   const normalizeCertificateTemplate = (template, index = 0) => {
-    const isPressure = /pressure|WS-WP-CRT-004/i.test(String(template?.type || template?.name || template?.primaryProcedure || ""));
-    return {
+    const sourceText = `${template?.type || ""} ${template?.name || ""} ${template?.primaryProcedure || ""} ${(template?.aliases || []).toString()}`;
+    const type = normalizeTemplateType(template?.type || (/torque|ft.?lb/i.test(sourceText) ? "torque" : /pressure|gauge|WS-WP-CRT-004/i.test(sourceText) ? "pressure_gauge" : "other"));
+    const defaultPoints = templateDefaultPoints(type);
+    const points = normalizeTemplatePoints(template?.points ?? template?.testPoints, defaultPoints);
+    const rangeLabel = String(template?.rangeLabel || template?.unit || templateDefaultUnit(type));
+    const normalized = {
       id: String(template?.id || `CERT-${String(index + 1).padStart(3, "0")}`),
-      name: String(template?.name || template?.certificateName || template?.primaryProcedure || "Pressure Gauge"),
-      primaryProcedure: String(template?.primaryProcedure || template?.procedure || "WS-WP-CRT-004").trim(),
-      aliases: Array.isArray(template?.aliases) ? template.aliases.map((item) => String(item).trim()).filter(Boolean) : splitTemplateAliases(template?.aliases),
-      type: normalizeTemplateType(template?.type || (isPressure ? "pressure_gauge" : "other")),
+      name: String(template?.name || template?.certificateName || template?.primaryProcedure || (isTorqueTemplateType(type) ? "Hydraulic Torque" : "Pressure Gauge")),
+      primaryProcedure: String(template?.primaryProcedure || template?.procedure || (isTorqueTemplateType(type) ? "WS-WP-CRT-006" : "WS-WP-CRT-004")).trim(),
+      aliases: splitTemplateAliases(template?.aliases),
+      type,
       rev: String(template?.rev || template?.revision || ""),
-      unit: String(template?.unit || template?.rangeLabel || "PSI"),
-      testPoints: normalizeTemplatePoints(template?.testPoints ?? template?.points, isPressure ? 5 : 1),
+      rangeLabel,
+      unit: rangeLabel,
+      points,
+      testPoints: points,
       includeZero: template?.includeZero === true,
-      defaultAccuracy: String(template?.defaultAccuracy || template?.accuracy || (isPressure ? "\u00b11.0%" : "")),
+      defaultAccuracy: String(template?.defaultAccuracy || template?.accuracy || templateDefaultAccuracy(type)),
       requires: normalizeTemplateRequires(template?.requires),
       description: String(template?.description || ""),
+      customTables: normalizeCustomTables(template?.customTables),
+      showGraph: template?.showGraph === true || isTorqueTemplateType(type) && template?.showGraph !== false,
     };
+    if (!normalized.customTables.length) normalized.customTables = defaultTablesForTemplate(normalized);
+    return normalized;
   };
 
   const legacyTemplateProcedureList = (templates) => [
     ...new Set(templates.flatMap((template) => [template.primaryProcedure, ...(template.aliases || [])]).filter(Boolean)),
   ];
+
+  const isTemporaryQaCertificateTemplate = (template) =>
+    template?.name === "QA Temporary Torque Template" &&
+    template?.primaryProcedure === "WS-WP-CRT-006-QA";
+
+  const cleanCertificateTemplates = (templates) =>
+    templates.filter((template) => !isTemporaryQaCertificateTemplate(template));
 
   const nextCertificateTemplateId = (templates) => {
     const nextNumber = templates.reduce((max, template) => {
@@ -1852,17 +2027,21 @@
   };
 
   const persistCertificateTemplates = (templates) => {
+    const normalized = cleanCertificateTemplates(templates.map(normalizeCertificateTemplate));
     try {
-      localStorage.setItem(CERT_TEMPLATE_KEY, JSON.stringify(templates));
-      localStorage.setItem(LEGACY_CERT_TYPES_KEY, JSON.stringify(legacyTemplateProcedureList(templates)));
+      localStorage.setItem(CERT_TEMPLATE_KEY, JSON.stringify(normalized));
+      localStorage.setItem(LEGACY_CERT_TYPES_KEY, JSON.stringify(legacyTemplateProcedureList(normalized)));
     } catch {}
   };
 
   const readCertificateTemplates = () => {
     const saved = readJsonArray(CERT_TEMPLATE_KEY);
     if (saved.length) {
-      const normalized = saved.map(normalizeCertificateTemplate);
-      persistCertificateTemplates(normalized);
+      const normalized = cleanCertificateTemplates(saved.map(normalizeCertificateTemplate));
+      try {
+        localStorage.setItem(CERT_TEMPLATE_KEY, JSON.stringify(normalized));
+        localStorage.setItem(LEGACY_CERT_TYPES_KEY, JSON.stringify(legacyTemplateProcedureList(normalized)));
+      } catch {}
       return normalized;
     }
     const legacy = readJsonArray(LEGACY_CERT_TYPES_KEY).filter((item) => typeof item === "string" && item.trim());
@@ -1871,7 +2050,7 @@
         id: `CERT-${String(index + 1).padStart(3, "0")}`,
         name: procedure === "WS-WP-CRT-004" ? "Pressure Gauge" : procedure,
         primaryProcedure: procedure,
-        type: /pressure|WS-WP-CRT-004/i.test(procedure) ? "pressure_gauge" : "other",
+        type: /torque|ft.?lb/i.test(procedure) ? "torque" : /pressure|WS-WP-CRT-004/i.test(procedure) ? "pressure_gauge" : "other",
       }, index));
       persistCertificateTemplates(migrated);
       return migrated;
@@ -1881,126 +2060,368 @@
     return seeded;
   };
 
+  const requirementLabels = [
+    ["asFoundInc", "Requires As Found Increasing"],
+    ["asFoundDec", "Requires As Found Decreasing"],
+    ["asLeftInc", "Requires As Left Increasing"],
+    ["asLeftDec", "Requires As Left Decreasing"],
+  ];
+
+  const certificateTypeOptionsHtml = (selectedType) => CERT_TYPE_OPTIONS
+    .map(([value, label]) => `<option value="${escapeHtml(value)}"${value === normalizeTemplateType(selectedType) ? " selected" : ""}>${escapeHtml(label)}</option>`)
+    .join("");
+
   const certificateTemplateFormHtml = (template = defaultCertificateTemplate(), mode = "add") => {
     const normalized = normalizeCertificateTemplate(template);
-    const typeOptions = CERT_TYPE_OPTIONS
-      .map(([value, label]) => `<option value="${escapeHtml(value)}"${value === normalized.type ? " selected" : ""}>${escapeHtml(label)}</option>`)
-      .join("");
     const requireCheck = (name, label) => `
-      <label class="certificate-template-check">
+      <label class="certificate-template-require-box">
         <input type="checkbox" name="${escapeHtml(name)}"${normalized.requires[name] ? " checked" : ""}>
         <span>${escapeHtml(label)}</span>
       </label>`;
     return `<form data-calibrio-certificate-template-form="${escapeHtml(mode)}" data-certificate-id="${escapeHtml(normalized.id)}">
-      <div class="certificate-template-fields">
-        <label>Certificate Name<input name="name" value="${escapeHtml(normalized.name)}" required placeholder="Pressure Gauge - 30K Chart"></label>
+      <div class="certificate-template-edit-grid">
+        <label class="certificate-template-span">Certificate Name<input name="name" value="${escapeHtml(normalized.name)}" required placeholder="Pressure Gauge - 30K Chart"></label>
         <label>Primary Procedure ID<input name="primaryProcedure" value="${escapeHtml(normalized.primaryProcedure)}" required placeholder="WS-WP-CRT-004"></label>
-        <label class="certificate-template-span">Equivalent Procedures / Aliases<textarea name="aliases" placeholder="WS-WP-7.2, CRT-004">${escapeHtml(normalized.aliases.join(", "))}</textarea></label>
-        <label>Type<select name="type">${typeOptions}</select></label>
+        <label>Equivalent Procedures / Aliases<textarea name="aliases" placeholder="WS-WP-7.2, CRT-004">${escapeHtml(normalized.aliases.join(", "))}</textarea></label>
+        <label>Type<select name="type">${certificateTypeOptionsHtml(normalized.type)}</select></label>
         <label>Rev<input name="rev" value="${escapeHtml(normalized.rev)}" placeholder="002"></label>
-        <label>Range / Capacity Label<input name="unit" value="${escapeHtml(normalized.unit)}" placeholder="PSI"></label>
-        <label>Number of Test Points<input name="testPoints" type="number" min="1" step="1" value="${escapeHtml(normalized.testPoints)}"></label>
+        <label>Range / Capacity Label<input name="rangeLabel" value="${escapeHtml(normalized.rangeLabel)}" placeholder="PSI, FTLB"></label>
         <label>Default Accuracy / Tolerance<input name="defaultAccuracy" value="${escapeHtml(normalized.defaultAccuracy)}" placeholder="&plusmn;1.0%"></label>
-        <label class="certificate-template-check"><input type="checkbox" name="includeZero"${normalized.includeZero ? " checked" : ""}><span>Include Zero Reading?</span></label>
-        <div class="certificate-template-requires">
-          ${requireCheck("asFoundInc", "Requires As Found Increasing")}
-          ${requireCheck("asFoundDec", "Requires As Found Decreasing")}
-          ${requireCheck("asLeftInc", "Requires As Left Increasing")}
-          ${requireCheck("asLeftDec", "Requires As Left Decreasing")}
-        </div>
+        <label>Number of Test Points<input name="points" type="number" min="1" step="1" value="${escapeHtml(normalized.points)}"></label>
+        <label class="certificate-template-check-inline"><input type="checkbox" name="includeZero"${normalized.includeZero ? " checked" : ""}><span>Include Zero Reading?</span></label>
+        <fieldset class="certificate-template-requires certificate-template-span">
+          <legend>Required Tables</legend>
+          <div>${requirementLabels.map(([key, label]) => requireCheck(key, label)).join("")}</div>
+        </fieldset>
         <label class="certificate-template-span">Description<textarea name="description" placeholder="Template notes">${escapeHtml(normalized.description)}</textarea></label>
       </div>
-      <footer>
+      <footer class="certificate-template-form-actions">
         <button type="submit" class="primary">Save Certificate</button>
-        <button type="button" class="ghost" data-calibrio-certificate-template-action="close">Cancel</button>
+        <button type="button" class="secondary" data-calibrio-certificate-template-action="${mode === "add" ? "close" : "drawer-view"}" data-certificate-id="${escapeHtml(normalized.id)}">Cancel</button>
+        ${mode === "edit" ? `<button type="button" class="primary" data-calibrio-certificate-template-action="use" data-certificate-id="${escapeHtml(normalized.id)}">Use This Certificate</button>
+        <button type="button" class="danger-outline" data-calibrio-certificate-template-action="delete" data-certificate-id="${escapeHtml(normalized.id)}">Delete Certificate</button>` : ""}
       </footer>
     </form>`;
   };
 
   const certificateTemplateDetailHtml = (template) => {
-    const requiredTables = [
-      ["asFoundInc", "As Found Increasing"],
-      ["asFoundDec", "As Found Decreasing"],
-      ["asLeftInc", "As Left Increasing"],
-      ["asLeftDec", "As Left Decreasing"],
-    ].map(([key, label]) => `<li>${template.requires?.[key] ? "Included" : "Not used"} - ${escapeHtml(label)}</li>`).join("");
+    const normalized = normalizeCertificateTemplate(template);
+    const detailItems = [
+      ["Cert ID", normalized.id],
+      ["Certificate Name", normalized.name],
+      ["Primary Procedure", normalized.primaryProcedure],
+      ["Equivalent Procedures / Aliases", normalized.aliases.join(", ") || "-"],
+      ["Type", displayTemplateType(normalized.type)],
+      ["Rev", normalized.rev || "-"],
+      ["Range / Capacity Label", normalized.rangeLabel || "-"],
+      ["Default Accuracy / Tolerance", normalized.defaultAccuracy || "-"],
+      ["Number of Test Points", normalized.includeZero ? `${normalized.points} + zero` : normalized.points],
+      ["Include Zero Reading?", normalized.includeZero ? "Yes" : "No"],
+      ["Show Graph", normalized.showGraph ? "Yes" : "No"],
+      ["Tables", `${normalized.customTables.length} data table${normalized.customTables.length === 1 ? "" : "s"}`],
+    ];
+    const requirementHtml = requirementLabels
+      .map(([key, label]) => `<span class="${normalized.requires[key] ? "is-on" : "is-off"}">${normalized.requires[key] ? "Included" : "Not used"} - ${escapeHtml(label.replace("Requires ", ""))}</span>`)
+      .join("");
     return `<div class="certificate-template-detail-grid">
-      <p><b>Cert ID</b><span>${escapeHtml(template.id)}</span></p>
-      <p><b>Name</b><span>${escapeHtml(template.name)}</span></p>
-      <p><b>Primary Procedure</b><span>${escapeHtml(template.primaryProcedure)}</span></p>
-      <p><b>Aliases</b><span>${escapeHtml(template.aliases.join(", ") || "-")}</span></p>
-      <p><b>Type</b><span>${escapeHtml(displayTemplateType(template.type))}</span></p>
-      <p><b>Rev</b><span>${escapeHtml(template.rev || "-")}</span></p>
-      <p><b>Range Label</b><span>${escapeHtml(template.unit || "-")}</span></p>
-      <p><b>Points</b><span>${escapeHtml(template.includeZero ? `${template.testPoints} + zero` : template.testPoints)}</span></p>
-      <p><b>Default Accuracy</b><span>${escapeHtml(template.defaultAccuracy || "-")}</span></p>
-      <p><b>Point Formula</b><span>Range / ${escapeHtml(template.testPoints)} x i${template.includeZero ? " with zero row" : ""}</span></p>
-      <div class="certificate-template-span"><b>Required Tables</b><ul class="certificate-template-requirement-list">${requiredTables}</ul></div>
-      <div class="certificate-template-span"><b>Description</b><p class="certificate-template-description">${escapeHtml(template.description || "-")}</p></div>
+      ${detailItems.map(([label, value]) => `<p><b>${escapeHtml(label)}</b><span>${escapeHtml(value)}</span></p>`).join("")}
+      <div class="certificate-template-span certificate-template-detail-panel"><b>Required Tables</b><div class="certificate-template-requirement-list">${requirementHtml}</div></div>
+      <div class="certificate-template-span certificate-template-detail-panel"><b>Description</b><p>${escapeHtml(normalized.description || "-")}</p></div>
     </div>`;
   };
 
-  const renderCertificateTemplateDrawer = () => {
-    document.querySelector("[data-calibrio-certificate-template-drawer]")?.remove();
-    if (!state.activeCertificateTemplateId) return;
-    const template = readCertificateTemplates().find((item) => item.id === state.activeCertificateTemplateId);
-    if (!template) return;
-    const mode = state.certificateTemplateDrawerMode === "edit" ? "edit" : "view";
-    const shade = document.createElement("div");
-    shade.className = "certificate-drawer-shade";
-    shade.dataset.calibrioCertificateTemplateDrawer = "1";
-    shade.innerHTML = `<aside class="certificate-template-drawer" role="dialog" aria-modal="true" aria-label="Certificate template details">
-      <header>
-        <div><small>CERTIFICATE TEMPLATE</small><h2>${escapeHtml(template.name)}</h2><p>${escapeHtml(template.primaryProcedure)}</p></div>
-        <button type="button" class="x" data-calibrio-certificate-template-action="close">X</button>
-      </header>
-      <div class="certificate-template-tabs">
-        <button type="button" class="${mode === "view" ? "active" : ""}" data-calibrio-certificate-template-action="drawer-view" data-certificate-id="${escapeHtml(template.id)}">View</button>
-        <button type="button" class="${mode === "edit" ? "active" : ""}" data-calibrio-certificate-template-action="drawer-edit" data-certificate-id="${escapeHtml(template.id)}">Edit</button>
-      </div>
-      <section>${mode === "edit" ? certificateTemplateFormHtml(template, "edit") : certificateTemplateDetailHtml(template)}</section>
-      <div class="certificate-template-drawer-actions">
-        <button type="button" class="primary" data-calibrio-certificate-template-action="use" data-certificate-id="${escapeHtml(template.id)}">Use This Certificate</button>
-        <button type="button" class="danger" data-calibrio-certificate-template-action="delete" data-certificate-id="${escapeHtml(template.id)}">Delete Certificate</button>
-      </div>
-    </aside>`;
-    document.body.appendChild(shade);
+  const tablePointListValue = (table) => {
+    const firstColumn = table.columns?.[0];
+    if (!firstColumn) return "";
+    return (table.rows || []).map((row) => row[firstColumn]).filter((value) => String(value || "").trim()).join(", ");
   };
 
-  const renderCertificateTemplateModal = (template = defaultCertificateTemplate(), mode = "add") => {
-    document.querySelector("[data-calibrio-certificate-template-modal]")?.remove();
-    const shade = document.createElement("div");
-    shade.className = "certificate-drawer-shade";
-    shade.dataset.calibrioCertificateTemplateModal = "1";
-    shade.innerHTML = `<section class="certificate-template-drawer certificate-template-modal" role="dialog" aria-modal="true" aria-label="Add certificate template">
-      <header>
-        <div><small>CERTIFICATE SETUP</small><h2>${mode === "add" ? "Add Certificate" : "Edit Certificate"}</h2></div>
-        <button type="button" class="x" data-calibrio-certificate-template-action="close">X</button>
-      </header>
-      ${certificateTemplateFormHtml(template, mode)}
-    </section>`;
-    document.body.appendChild(shade);
+  const renderTableGrid = (table, tableIndex) => {
+    const rows = table.rows.length ? table.rows : [table.columns.reduce((record, column) => ({ ...record, [column]: "" }), {})];
+    return `<div class="certificate-table-grid-wrap">
+      <table class="certificate-table-grid">
+        <thead><tr>${table.columns.map((column, columnIndex) => `<th><span>${escapeHtml(column)}</span><button type="button" class="mini-danger" data-calibrio-certificate-template-action="remove-column" data-certificate-id="${escapeHtml(state.activeCertificateTemplateId)}" data-table-index="${tableIndex}" data-column-index="${columnIndex}" title="Remove column">X</button></th>`).join("")}</tr></thead>
+        <tbody>${rows.map((row, rowIndex) => `<tr>${table.columns.map((column) => `<td><input data-table-row="${rowIndex}" data-table-column="${escapeHtml(column)}" value="${escapeHtml(row[column] || "")}"></td>`).join("")}</tr>`).join("")}</tbody>
+      </table>
+    </div>`;
   };
 
-  const collectCertificateTemplateForm = (form) => ({
-    id: form.dataset.certificateId || "",
-    name: form.elements.name?.value?.trim() || "",
-    primaryProcedure: form.elements.primaryProcedure?.value?.trim() || "",
-    aliases: splitTemplateAliases(form.elements.aliases?.value || ""),
-    type: normalizeTemplateType(form.elements.type?.value),
-    rev: form.elements.rev?.value?.trim() || "",
-    unit: form.elements.unit?.value?.trim() || "PSI",
-    testPoints: normalizeTemplatePoints(form.elements.testPoints?.value, 5),
-    includeZero: form.elements.includeZero?.checked === true,
-    defaultAccuracy: form.elements.defaultAccuracy?.value?.trim() || "\u00b11.0%",
-    requires: {
-      asFoundInc: form.elements.asFoundInc?.checked === true,
-      asFoundDec: form.elements.asFoundDec?.checked === true,
-      asLeftInc: form.elements.asLeftInc?.checked === true,
-      asLeftDec: form.elements.asLeftDec?.checked === true,
-    },
-    description: form.elements.description?.value?.trim() || "",
-  });
+  const renderTorqueGraph = (template) => {
+    if (!template.showGraph || !isTorqueTemplateType(template.type)) return "";
+    const conversion = template.customTables.find((table) => /conversion|pressure.*torque/i.test(table.name)) || template.customTables[0];
+    const rows = (conversion?.rows || []).map((row) => {
+      const x = Number(String(row["Pressure PSI"] || row["Input PSI"] || "").replace(/,/g, ""));
+      const y = Number(String(row["Torque FTLB"] || row["Output FTLB"] || "").replace(/,/g, ""));
+      return { x, y: Number.isFinite(y) && y > 0 ? y : x * CERT_DEFAULT_TORQUE_FACTOR };
+    }).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+    if (rows.length < 2) return `<div class="certificate-graph-placeholder">Add at least two torque rows to preview the graph.</div>`;
+    const width = 560;
+    const height = 190;
+    const pad = 32;
+    const minX = Math.min(...rows.map((point) => point.x));
+    const maxX = Math.max(...rows.map((point) => point.x));
+    const minY = 0;
+    const maxY = Math.max(...rows.map((point) => point.y));
+    const xScale = (value) => pad + ((value - minX) / Math.max(maxX - minX, 1)) * (width - pad * 2);
+    const yScale = (value) => height - pad - ((value - minY) / Math.max(maxY - minY, 1)) * (height - pad * 2);
+    const points = rows.map((point) => `${xScale(point.x).toFixed(1)},${yScale(point.y).toFixed(1)}`).join(" ");
+    return `<div class="certificate-graph-card">
+      <b>Torque Graph Preview</b>
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Torque graph">
+        <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}"></line>
+        <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}"></line>
+        <polyline points="${points}"></polyline>
+        ${rows.map((point) => `<circle cx="${xScale(point.x).toFixed(1)}" cy="${yScale(point.y).toFixed(1)}" r="3"></circle>`).join("")}
+        <text x="${width / 2}" y="${height - 5}">Input PSI</text>
+        <text x="4" y="16">Output Torque</text>
+      </svg>
+    </div>`;
+  };
+
+  const certificateTablesBuilderHtml = (template) => {
+    const normalized = normalizeCertificateTemplate(template);
+    return `<form data-calibrio-certificate-template-form="tables" data-certificate-id="${escapeHtml(normalized.id)}">
+      <div class="certificate-template-builder-head">
+        <div><b>Tables Builder</b><p>Define the Excel-like tables this certificate type should use during calibration.</p></div>
+        <div>
+          <label class="certificate-template-check-inline"><input type="checkbox" name="showGraph"${normalized.showGraph ? " checked" : ""}><span>Show Graph</span></label>
+          <button type="button" class="secondary" data-calibrio-certificate-template-action="regenerate-tables" data-certificate-id="${escapeHtml(normalized.id)}">Regenerate Defaults</button>
+          <button type="button" class="primary" data-calibrio-certificate-template-action="add-table" data-certificate-id="${escapeHtml(normalized.id)}">+ Add Data Table</button>
+        </div>
+      </div>
+      <div class="certificate-template-table-stack">
+        ${normalized.customTables.map((table, tableIndex) => `<section class="certificate-table-builder-card" data-calibrio-template-table-card="${tableIndex}">
+          <header>
+            <label>Table Name<input name="tableName" value="${escapeHtml(table.name)}"></label>
+            <p><b>Number of Rows</b><span>${escapeHtml(table.rows.length || normalized.points)}</span></p>
+            <button type="button" class="danger-outline" data-calibrio-certificate-template-action="remove-table" data-certificate-id="${escapeHtml(normalized.id)}" data-table-index="${tableIndex}">Delete Table</button>
+          </header>
+          <div class="certificate-table-meta">
+            <label>Point List<input name="pointList" value="${escapeHtml(tablePointListValue(table))}" placeholder="1000, 2000, 3000"></label>
+            <label>Formula Help Text<textarea name="formulas" placeholder="Formula notes">${escapeHtml(table.formulas || "")}</textarea></label>
+          </div>
+          <div class="certificate-column-tags">
+            ${table.columns.map((column, columnIndex) => `<span class="certificate-column-tag" data-column-name="${escapeHtml(column)}">${escapeHtml(column)} <button type="button" data-calibrio-certificate-template-action="remove-column" data-certificate-id="${escapeHtml(normalized.id)}" data-table-index="${tableIndex}" data-column-index="${columnIndex}">X</button></span>`).join("")}
+            <input data-column-entry="${tableIndex}" placeholder="Add column name">
+            <button type="button" class="secondary" data-calibrio-certificate-template-action="add-column" data-certificate-id="${escapeHtml(normalized.id)}" data-table-index="${tableIndex}">Add Column</button>
+          </div>
+          ${renderTableGrid(table, tableIndex)}
+        </section>`).join("")}
+      </div>
+      ${renderTorqueGraph(normalized)}
+      <footer class="certificate-template-form-actions">
+        <button type="submit" class="primary">Save Certificate</button>
+        <button type="button" class="secondary" data-calibrio-certificate-template-action="drawer-view" data-certificate-id="${escapeHtml(normalized.id)}">Cancel</button>
+      </footer>
+    </form>`;
+  };
+
+  const parseCellNumber = (value) => {
+    const number = Number(String(value || "").replace(/,/g, "").match(/-?\d+(\.\d+)?/)?.[0]);
+    return Number.isFinite(number) ? number : null;
+  };
+
+  const guessTemplateTypeFromTables = (tables) => {
+    const text = tables.map((table) => `${table.name} ${table.columns.join(" ")} ${JSON.stringify(table.rows)}`).join(" ").toLowerCase();
+    if (/(ft\s*lb|ftlb|torque)/.test(text) && /psi/.test(text)) return "torque";
+    if (/(gauge|standard output|pressure)/.test(text)) return "pressure_gauge";
+    return "other";
+  };
+
+  const parseTemplateZipEntries = async (buffer) => {
+    const bytes = new Uint8Array(buffer);
+    const view = new DataView(buffer);
+    const decoder = new TextDecoder();
+    const findEocd = () => {
+      for (let offset = bytes.length - 22; offset >= Math.max(0, bytes.length - 66000); offset -= 1) {
+        if (view.getUint32(offset, true) === 0x06054b50) return offset;
+      }
+      return -1;
+    };
+    const eocd = findEocd();
+    if (eocd < 0) throw new Error("Could not read the XLSX package.");
+    const entryCount = view.getUint16(eocd + 10, true);
+    let directoryOffset = view.getUint32(eocd + 16, true);
+    const entries = new Map();
+    for (let index = 0; index < entryCount; index += 1) {
+      if (view.getUint32(directoryOffset, true) !== 0x02014b50) break;
+      const method = view.getUint16(directoryOffset + 10, true);
+      const compressedSize = view.getUint32(directoryOffset + 20, true);
+      const nameLength = view.getUint16(directoryOffset + 28, true);
+      const extraLength = view.getUint16(directoryOffset + 30, true);
+      const commentLength = view.getUint16(directoryOffset + 32, true);
+      const localOffset = view.getUint32(directoryOffset + 42, true);
+      const name = decoder.decode(bytes.slice(directoryOffset + 46, directoryOffset + 46 + nameLength));
+      const localNameLength = view.getUint16(localOffset + 26, true);
+      const localExtraLength = view.getUint16(localOffset + 28, true);
+      const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+      const compressed = bytes.slice(dataStart, dataStart + compressedSize);
+      let content;
+      if (method === 0) content = compressed;
+      else if (method === 8 && "DecompressionStream" in window) {
+        content = new Uint8Array(await new Response(new Blob([compressed]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+      } else {
+        throw new Error("This browser cannot decompress the XLSX file locally.");
+      }
+      entries.set(name, content);
+      directoryOffset += 46 + nameLength + extraLength + commentLength;
+    }
+    return entries;
+  };
+
+  const xmlDoc = (text) => new DOMParser().parseFromString(text, "application/xml");
+
+  const parseSharedStrings = (entries) => {
+    const bytes = entries.get("xl/sharedStrings.xml");
+    if (!bytes) return [];
+    const doc = xmlDoc(new TextDecoder().decode(bytes));
+    return [...doc.getElementsByTagName("si")].map((item) => [...item.getElementsByTagName("t")].map((node) => node.textContent || "").join(""));
+  };
+
+  const parseSheetRows = (sheetXml, sharedStrings) => {
+    const doc = xmlDoc(sheetXml);
+    return [...doc.getElementsByTagName("row")].map((row) => [...row.getElementsByTagName("c")].map((cell) => {
+      const type = cell.getAttribute("t");
+      const valueNode = cell.getElementsByTagName("v")[0];
+      if (type === "s") return sharedStrings[Number(valueNode?.textContent || 0)] || "";
+      if (type === "inlineStr") return [...cell.getElementsByTagName("t")].map((node) => node.textContent || "").join("");
+      return valueNode?.textContent || [...cell.getElementsByTagName("t")].map((node) => node.textContent || "").join("");
+    }));
+  };
+
+  const workbookRelMap = (entries) => {
+    const bytes = entries.get("xl/_rels/workbook.xml.rels");
+    if (!bytes) return new Map();
+    const doc = xmlDoc(new TextDecoder().decode(bytes));
+    return new Map([...doc.getElementsByTagName("Relationship")].map((rel) => [rel.getAttribute("Id"), rel.getAttribute("Target") || ""]));
+  };
+
+  const parseWorkbookSheets = async (file) => {
+    const entries = await parseTemplateZipEntries(await file.arrayBuffer());
+    const workbookBytes = entries.get("xl/workbook.xml");
+    if (!workbookBytes) throw new Error("Workbook metadata was not found.");
+    const workbook = xmlDoc(new TextDecoder().decode(workbookBytes));
+    const rels = workbookRelMap(entries);
+    const sharedStrings = parseSharedStrings(entries);
+    return [...workbook.getElementsByTagName("sheet")].map((sheet, index) => {
+      const name = sheet.getAttribute("name") || `Sheet ${index + 1}`;
+      const relId = sheet.getAttribute("r:id") || sheet.getAttribute("id");
+      const target = rels.get(relId) || `worksheets/sheet${index + 1}.xml`;
+      const path = target.startsWith("/") ? target.slice(1) : `xl/${target}`.replace(/\/\.\//g, "/");
+      const xml = entries.get(path);
+      return { name, rows: xml ? parseSheetRows(new TextDecoder().decode(xml), sharedStrings) : [] };
+    });
+  };
+
+  const tableFromSheet = (sheet) => {
+    const usefulRows = (sheet.rows || []).filter((row) => row.some((cell) => String(cell || "").trim()));
+    const headerIndex = usefulRows.findIndex((row) => row.filter((cell) => String(cell || "").trim()).length >= 2 && row.some((cell) => /[A-Za-z]/.test(String(cell || ""))));
+    if (headerIndex < 0) return null;
+    const columns = usefulRows[headerIndex].map((cell, index) => String(cell || `Column ${index + 1}`).trim()).filter(Boolean).slice(0, 8);
+    if (columns.length < 2) return null;
+    const rows = usefulRows.slice(headerIndex + 1)
+      .filter((row) => row.some((cell) => String(cell || "").trim()))
+      .map((row) => columns.reduce((record, column, index) => {
+        record[column] = row[index] == null ? "" : String(row[index]);
+        return record;
+      }, {}));
+    return {
+      name: sheet.name,
+      columns,
+      rows,
+      formulas: "",
+      autoGenerated: false,
+    };
+  };
+
+  const buildUploadPreview = async (file) => {
+    const sheets = await parseWorkbookSheets(file);
+    const tables = sheets.map(tableFromSheet).filter(Boolean);
+    const guessedType = guessTemplateTypeFromTables(tables);
+    const pointCounts = tables.map((table) => table.rows.filter((row) => Object.values(row).some((value) => parseCellNumber(value) !== null)).length).filter(Boolean);
+    return {
+      fileName: file.name,
+      sheetNames: sheets.map((sheet) => sheet.name),
+      tables,
+      type: guessedType,
+      points: pointCounts.length ? Math.max(...pointCounts) : templateDefaultPoints(guessedType),
+    };
+  };
+
+  const uploadPreviewHtml = () => {
+    const preview = state.certificateTemplateUploadPreview;
+    if (!preview) return "";
+    return `<div class="certificate-upload-preview">
+      <b>Found ${preview.sheetNames.length} sheet${preview.sheetNames.length === 1 ? "" : "s"}: ${escapeHtml(preview.sheetNames.join(", "))}</b>
+      <p>Detected ${escapeHtml(displayTemplateType(preview.type))}; ${escapeHtml(preview.tables.length)} importable table${preview.tables.length === 1 ? "" : "s"}; ${escapeHtml(preview.points)} point${preview.points === 1 ? "" : "s"}.</p>
+      <button type="button" class="primary" data-calibrio-certificate-template-action="import-upload" data-certificate-id="${escapeHtml(state.activeCertificateTemplateId)}">Import as Tables</button>
+    </div>`;
+  };
+
+  const certificateUploadHtml = (template) => `<div class="certificate-upload-tab">
+    <div class="certificate-upload-drop" data-calibrio-template-drop data-certificate-id="${escapeHtml(template.id)}">
+      <input type="file" accept=".xlsx" data-calibrio-certificate-template-upload data-certificate-id="${escapeHtml(template.id)}">
+      <b>Drag & drop Excel .xlsx</b>
+      <span>or choose a certificate workbook to parse locally.</span>
+      <button type="button" class="primary" data-calibrio-certificate-template-action="trigger-upload" data-certificate-id="${escapeHtml(template.id)}">Upload Certificate Template</button>
+    </div>
+    ${uploadPreviewHtml()}
+  </div>`;
+
+  const collectCertificateTemplateForm = (form) => {
+    const type = normalizeTemplateType(form.elements.type?.value);
+    const points = normalizeTemplatePoints(form.elements.points?.value, templateDefaultPoints(type));
+    return {
+      id: form.dataset.certificateId || "",
+      name: form.elements.name?.value?.trim() || "",
+      primaryProcedure: form.elements.primaryProcedure?.value?.trim() || "",
+      aliases: splitTemplateAliases(form.elements.aliases?.value || ""),
+      type,
+      rev: form.elements.rev?.value?.trim() || "",
+      rangeLabel: form.elements.rangeLabel?.value?.trim() || templateDefaultUnit(type),
+      unit: form.elements.rangeLabel?.value?.trim() || templateDefaultUnit(type),
+      points,
+      testPoints: points,
+      includeZero: form.elements.includeZero?.checked === true,
+      defaultAccuracy: form.elements.defaultAccuracy?.value?.trim() || templateDefaultAccuracy(type),
+      requires: {
+        asFoundInc: form.elements.asFoundInc?.checked === true,
+        asFoundDec: form.elements.asFoundDec?.checked === true,
+        asLeftInc: form.elements.asLeftInc?.checked === true,
+        asLeftDec: form.elements.asLeftDec?.checked === true,
+      },
+      description: form.elements.description?.value?.trim() || "",
+    };
+  };
+
+  const collectTablesBuilderForm = (form) => {
+    const tables = [...form.querySelectorAll("[data-calibrio-template-table-card]")].map((card, index) => {
+      const columns = [...card.querySelectorAll("[data-column-name]")]
+        .map((tag) => tag.dataset.columnName || tag.textContent.replace("X", "").trim())
+        .filter(Boolean);
+      const safeColumns = columns.length ? columns : ["Point", "Reading"];
+      const gridRows = [...card.querySelectorAll("tbody tr")].map((row) => {
+        const record = {};
+        for (const input of row.querySelectorAll("[data-table-column]")) record[input.dataset.tableColumn] = input.value;
+        return record;
+      });
+      const pointList = splitTemplateAliases(card.querySelector("[name='pointList']")?.value || "");
+      const rows = pointList.length && safeColumns[0]
+        ? pointList.map((point, rowIndex) => ({ ...(gridRows[rowIndex] || {}), [safeColumns[0]]: point }))
+        : gridRows;
+      return {
+        name: card.querySelector("[name='tableName']")?.value?.trim() || `Data Table ${index + 1}`,
+        columns: safeColumns,
+        rows: coerceTableRows(rows, safeColumns),
+        formulas: card.querySelector("[name='formulas']")?.value || "",
+        autoGenerated: false,
+      };
+    });
+    return {
+      customTables: normalizeCustomTables(tables),
+      showGraph: form.elements.showGraph?.checked === true,
+    };
+  };
 
   const filteredCertificateTemplates = () => {
     const query = state.certificateTemplateSearch.trim().toLowerCase();
@@ -2090,7 +2511,7 @@
         [...select.options].some((option) => option.value === procedure || option.textContent.trim() === procedure)
       );
       if (certificateSelect && procedure) setNativeFieldValue(certificateSelect, procedure);
-      const unit = String(template.unit || "").trim();
+      const unit = String(template.unit || template.rangeLabel || "").trim();
       const unitSelect = selects.find((select) =>
         unit && [...select.options].some((option) => option.value === unit || option.textContent.trim() === unit)
       );
@@ -2105,6 +2526,52 @@
       certificateTemplateFormAttempts = 0;
     };
     certificateTemplateFormTimer = window.setTimeout(attemptApply, 500);
+  };
+
+  const renderCertificateTemplateDrawer = () => {
+    document.querySelector("[data-calibrio-certificate-template-drawer]")?.remove();
+    if (!state.activeCertificateTemplateId) return;
+    const template = readCertificateTemplates().find((item) => item.id === state.activeCertificateTemplateId);
+    if (!template) return;
+    const allowedModes = new Set(["view", "edit", "tables", "upload"]);
+    const mode = allowedModes.has(state.certificateTemplateDrawerMode) ? state.certificateTemplateDrawerMode : "view";
+    const tab = (tabMode, label) => `<button type="button" class="${mode === tabMode ? "active" : ""}" data-calibrio-certificate-template-action="drawer-${tabMode}" data-certificate-id="${escapeHtml(template.id)}">${escapeHtml(label)}</button>`;
+    const content = mode === "edit" ? certificateTemplateFormHtml(template, "edit")
+      : mode === "tables" ? certificateTablesBuilderHtml(template)
+      : mode === "upload" ? certificateUploadHtml(template)
+      : certificateTemplateDetailHtml(template);
+    const shade = document.createElement("div");
+    shade.className = "certificate-drawer-shade";
+    shade.dataset.calibrioCertificateTemplateDrawer = "1";
+    shade.innerHTML = `<aside class="certificate-template-drawer" role="dialog" aria-modal="true" aria-label="Certificate template details">
+      <header>
+        <div><small>CERTIFICATE TEMPLATE</small><h2>Certificate Template: ${escapeHtml(template.name)}</h2><p>${escapeHtml(template.primaryProcedure)}</p></div>
+        <button type="button" class="x" data-calibrio-certificate-template-action="close">X</button>
+      </header>
+      <div class="certificate-template-tabs">
+        ${tab("view", "View")}
+        ${tab("edit", "Edit")}
+        ${tab("tables", "Tables Builder")}
+        ${tab("upload", "Upload")}
+      </div>
+      <section>${content}</section>
+    </aside>`;
+    document.body.appendChild(shade);
+  };
+
+  const renderCertificateTemplateModal = (template = defaultCertificateTemplate(), mode = "add") => {
+    document.querySelector("[data-calibrio-certificate-template-modal]")?.remove();
+    const shade = document.createElement("div");
+    shade.className = "certificate-drawer-shade";
+    shade.dataset.calibrioCertificateTemplateModal = "1";
+    shade.innerHTML = `<section class="certificate-template-drawer certificate-template-modal" role="dialog" aria-modal="true" aria-label="Add certificate template">
+      <header>
+        <div><small>CERTIFICATE SETUP</small><h2>${mode === "add" ? "Add Certificate" : "Edit Certificate"}</h2></div>
+        <button type="button" class="x" data-calibrio-certificate-template-action="close">X</button>
+      </header>
+      ${certificateTemplateFormHtml(template, mode)}
+    </section>`;
+    document.body.appendChild(shade);
   };
 
   const renderCertificatesTemplateLibrary = (force = false) => {
@@ -2122,10 +2589,10 @@
       <td>${escapeHtml(template.primaryProcedure)}</td>
       <td>${escapeHtml((template.aliases || []).join(", ") || "-")}</td>
       <td>${escapeHtml(displayTemplateType(template.type))}</td>
-      <td>${escapeHtml(template.includeZero ? `${template.testPoints} + zero` : template.testPoints)}</td>
+      <td>${escapeHtml(template.includeZero ? `${template.points} + zero` : template.points)}</td>
       <td>${escapeHtml(template.defaultAccuracy || "-")}</td>
       <td>${escapeHtml(template.rev || "-")}</td>
-      <td><button type="button" class="secondary" data-calibrio-certificate-template-action="edit" data-certificate-id="${escapeHtml(template.id)}">Edit</button><button type="button" class="danger" data-calibrio-certificate-template-action="delete" data-certificate-id="${escapeHtml(template.id)}">Delete</button></td>
+      <td><div class="certificate-template-actions"><button type="button" class="secondary" data-calibrio-certificate-template-action="edit" data-certificate-id="${escapeHtml(template.id)}">Edit</button><button type="button" class="danger-solid" data-calibrio-certificate-template-action="delete" data-certificate-id="${escapeHtml(template.id)}">Delete</button></div></td>
     </tr>`).join("");
     body.dataset.calibrioCertificateLibrary = "1";
     body.innerHTML = `<div class="title">
@@ -2133,20 +2600,33 @@
       <button type="button" class="primary" data-calibrio-certificate-template-action="add">+ Add Certificate</button>
     </div>
     <section class="panel certificate-template-library">
-      <div class="asset-list-toolbar"><div><b>${templates.length} certificate${templates.length === 1 ? "" : "s"}</b><p>Search by certificate name, primary procedure, or alias.</p></div><input data-calibrio-certificate-template-search value="${escapeHtml(state.certificateTemplateSearch)}" placeholder="Search by Name, Primary, Alias"></div>
+      <div class="asset-list-toolbar"><div><b>${templates.length} certificate${templates.length === 1 ? "" : "s"}</b></div><input data-calibrio-certificate-template-search value="${escapeHtml(state.certificateTemplateSearch)}" placeholder="Search certificates..."></div>
       <table><thead><tr>${["Cert ID", "Cert Name", "Primary Procedure", "Aliases", "Type", "Points", "Default Accuracy", "Rev", "Actions"].map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows || `<tr><td colspan="9" class="empty">No certificate templates found.</td></tr>`}</tbody></table>
     </section>`;
   };
 
   const saveCertificateTemplateForm = (form) => {
     const mode = form.dataset.calibrioCertificateTemplateForm;
+    const templates = readCertificateTemplates();
+    if (mode === "tables") {
+      const index = templates.findIndex((item) => item.id === form.dataset.certificateId);
+      if (index < 0) return;
+      const tableDraft = collectTablesBuilderForm(form);
+      templates[index] = normalizeCertificateTemplate({ ...templates[index], ...tableDraft });
+      persistCertificateTemplates(templates);
+      state.activeCertificateTemplateId = templates[index].id;
+      state.certificateTemplateDrawerMode = "tables";
+      renderCertificatesTemplateLibrary(true);
+      renderCertificateTemplateDrawer();
+      return;
+    }
     const draft = collectCertificateTemplateForm(form);
     if (!draft.name || !draft.primaryProcedure) {
       window.alert("Certificate Name and Primary Procedure ID are required.");
       return;
     }
-    const templates = readCertificateTemplates();
     const existingIndex = templates.findIndex((item) => item.id === draft.id);
+    const existing = existingIndex >= 0 ? templates[existingIndex] : null;
     const duplicate = templates.find((item) =>
       item.id !== draft.id &&
       item.primaryProcedure.toLowerCase() === draft.primaryProcedure.toLowerCase());
@@ -2154,38 +2634,97 @@
       window.alert(`Primary Procedure ID ${draft.primaryProcedure} is already used by ${duplicate.id}.`);
       return;
     }
+    const shouldRegenerateTables = !existing || tablesAreAutoGenerated(existing.customTables) || templateShapeKey(existing) !== templateShapeKey(draft);
     const saved = normalizeCertificateTemplate({
+      ...existing,
       ...draft,
       id: mode === "add" || existingIndex === -1 ? nextCertificateTemplateId(templates) : draft.id,
+      customTables: shouldRegenerateTables ? defaultTablesForTemplate(draft) : existing.customTables,
+      showGraph: existing?.showGraph === true || isTorqueTemplateType(draft.type),
     }, existingIndex === -1 ? templates.length : existingIndex);
     if (existingIndex === -1 || mode === "add") templates.push(saved);
     else templates[existingIndex] = saved;
     persistCertificateTemplates(templates);
     state.activeCertificateTemplateId = saved.id;
-    state.certificateTemplateDrawerMode = "view";
+    state.certificateTemplateDrawerMode = mode === "add" ? "view" : "edit";
     document.querySelector("[data-calibrio-certificate-template-modal]")?.remove();
     renderCertificatesTemplateLibrary(true);
     renderCertificateTemplateDrawer();
   };
 
-  const handleCertificateTemplateAction = (action, id) => {
+  const updateCurrentTemplateTables = (id, updater) => {
+    const templates = readCertificateTemplates();
+    const index = templates.findIndex((item) => item.id === id);
+    if (index < 0) return;
+    const form = document.querySelector("[data-calibrio-certificate-template-form='tables']");
+    if (form) {
+      const tableDraft = collectTablesBuilderForm(form);
+      templates[index] = normalizeCertificateTemplate({ ...templates[index], ...tableDraft });
+    }
+    templates[index] = normalizeCertificateTemplate(updater(templates[index]));
+    persistCertificateTemplates(templates);
+    state.activeCertificateTemplateId = id;
+    state.certificateTemplateDrawerMode = "tables";
+    renderCertificatesTemplateLibrary(true);
+    renderCertificateTemplateDrawer();
+  };
+
+  const handleCertificateTemplateUpload = async (file, id) => {
+    if (!file) return;
+    try {
+      state.certificateTemplateUploadPreview = await buildUploadPreview(file);
+      state.activeCertificateTemplateId = id || state.activeCertificateTemplateId;
+      state.certificateTemplateDrawerMode = "upload";
+      renderCertificateTemplateDrawer();
+    } catch (error) {
+      window.alert(`Could not parse workbook: ${error?.message || error}`);
+    }
+  };
+
+  const importCertificateTemplateUpload = (id) => {
+    const preview = state.certificateTemplateUploadPreview;
+    if (!preview) return;
+    const templates = readCertificateTemplates();
+    const index = templates.findIndex((item) => item.id === id);
+    if (index < 0) return;
+    const imported = normalizeCertificateTemplate({
+      ...templates[index],
+      type: preview.type,
+      points: preview.points,
+      testPoints: preview.points,
+      rangeLabel: templateDefaultUnit(preview.type),
+      unit: templateDefaultUnit(preview.type),
+      customTables: preview.tables.map((table) => ({ ...table, autoGenerated: false })),
+      showGraph: isTorqueTemplateType(preview.type),
+    });
+    templates[index] = imported;
+    persistCertificateTemplates(templates);
+    state.certificateTemplateUploadPreview = null;
+    state.activeCertificateTemplateId = id;
+    state.certificateTemplateDrawerMode = "tables";
+    renderCertificatesTemplateLibrary(true);
+    renderCertificateTemplateDrawer();
+  };
+
+  const handleCertificateTemplateAction = (action, id, trigger = null) => {
     if (action === "close") {
       document.querySelector("[data-calibrio-certificate-template-modal]")?.remove();
       document.querySelector("[data-calibrio-certificate-template-drawer]")?.remove();
       state.activeCertificateTemplateId = "";
+      state.certificateTemplateUploadPreview = null;
       return;
     }
     if (action === "add") {
       renderCertificateTemplateModal({ ...defaultCertificateTemplate(), id: nextCertificateTemplateId(readCertificateTemplates()) }, "add");
       return;
     }
-    if (action === "view" || action === "drawer-view") {
+    if (action === "view" || action?.startsWith("drawer-")) {
       state.activeCertificateTemplateId = id;
-      state.certificateTemplateDrawerMode = "view";
+      state.certificateTemplateDrawerMode = action === "view" ? "view" : action.replace("drawer-", "");
       renderCertificateTemplateDrawer();
       return;
     }
-    if (action === "edit" || action === "drawer-edit") {
+    if (action === "edit") {
       state.activeCertificateTemplateId = id;
       state.certificateTemplateDrawerMode = "edit";
       renderCertificateTemplateDrawer();
@@ -2196,6 +2735,7 @@
       const templates = readCertificateTemplates().filter((item) => item.id !== id);
       persistCertificateTemplates(templates.length ? templates : [defaultCertificateTemplate()]);
       state.activeCertificateTemplateId = "";
+      state.certificateTemplateUploadPreview = null;
       renderCertificateTemplateDrawer();
       renderCertificatesTemplateLibrary(true);
       return;
@@ -2211,6 +2751,71 @@
       document.querySelector("[data-calibrio-certificate-template-modal]")?.remove();
       document.querySelector("[data-calibrio-certificate-template-drawer]")?.remove();
       window.location.assign(`${window.location.origin}${window.location.pathname}`);
+      return;
+    }
+    if (action === "trigger-upload") {
+      trigger?.closest(".certificate-upload-drop")?.querySelector("[data-calibrio-certificate-template-upload]")?.click();
+      return;
+    }
+    if (action === "import-upload") {
+      importCertificateTemplateUpload(id);
+      return;
+    }
+    if (action === "regenerate-tables") {
+      updateCurrentTemplateTables(id, (template) => ({ ...template, customTables: defaultTablesForTemplate(template) }));
+      return;
+    }
+    if (action === "add-table") {
+      updateCurrentTemplateTables(id, (template) => ({
+        ...template,
+        customTables: [...template.customTables, { name: "New Data Table", columns: ["Point", "Reading"], rows: [], formulas: "", autoGenerated: false }],
+      }));
+      return;
+    }
+    if (action === "remove-table") {
+      const tableIndex = Number(trigger?.dataset.tableIndex);
+      updateCurrentTemplateTables(id, (template) => ({
+        ...template,
+        customTables: template.customTables.filter((_, index) => index !== tableIndex),
+      }));
+      return;
+    }
+    if (action === "add-column") {
+      const tableIndex = Number(trigger?.dataset.tableIndex);
+      const entry = trigger?.closest(".certificate-column-tags")?.querySelector(`[data-column-entry="${tableIndex}"]`);
+      const column = entry?.value?.trim();
+      if (!column) return;
+      updateCurrentTemplateTables(id, (template) => {
+        const tables = template.customTables.map((table, index) => {
+          if (index !== tableIndex || table.columns.includes(column)) return table;
+          return {
+            ...table,
+            columns: [...table.columns, column],
+            rows: table.rows.map((row) => ({ ...row, [column]: "" })),
+            autoGenerated: false,
+          };
+        });
+        return { ...template, customTables: tables };
+      });
+      return;
+    }
+    if (action === "remove-column") {
+      const tableIndex = Number(trigger?.dataset.tableIndex);
+      const columnIndex = Number(trigger?.dataset.columnIndex);
+      updateCurrentTemplateTables(id, (template) => {
+        const tables = template.customTables.map((table, index) => {
+          if (index !== tableIndex) return table;
+          const removed = table.columns[columnIndex];
+          const columns = table.columns.filter((_, colIndex) => colIndex !== columnIndex);
+          const rows = table.rows.map((row) => {
+            const next = { ...row };
+            delete next[removed];
+            return next;
+          });
+          return { ...table, columns, rows, autoGenerated: false };
+        });
+        return { ...template, customTables: tables };
+      });
     }
   };
 
@@ -2227,6 +2832,26 @@
     if (!search) return;
     state.certificateTemplateSearch = search.value || "";
     renderCertificatesTemplateLibrary(true);
+  }, true);
+
+  document.addEventListener("change", (event) => {
+    const upload = event.target?.closest?.("[data-calibrio-certificate-template-upload]");
+    if (!upload) return;
+    const file = upload.files?.[0];
+    if (file) handleCertificateTemplateUpload(file, upload.dataset.certificateId || state.activeCertificateTemplateId);
+  }, true);
+
+  document.addEventListener("dragover", (event) => {
+    if (!event.target?.closest?.("[data-calibrio-template-drop]")) return;
+    event.preventDefault();
+  }, true);
+
+  document.addEventListener("drop", (event) => {
+    const drop = event.target?.closest?.("[data-calibrio-template-drop]");
+    if (!drop) return;
+    event.preventDefault();
+    const file = [...(event.dataTransfer?.files || [])].find((item) => /\.xlsx$/i.test(item.name));
+    if (file) handleCertificateTemplateUpload(file, drop.dataset.certificateId || state.activeCertificateTemplateId);
   }, true);
 
   const fixCertificateHtml = (html) => {

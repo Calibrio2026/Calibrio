@@ -1,6 +1,7 @@
 import __vite_rsc_assets_manifest from "./__vite_rsc_assets_manifest.js";
 import * as __viteRscAsyncHooks from "node:async_hooks";
 import { AsyncLocalStorage as AsyncLocalStorage$1 } from "node:async_hooks";
+import { readFileSync as __calibrioReadFileSync } from "node:fs";
 //#region \0rolldown/runtime.js
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -11769,6 +11770,11 @@ function extractModulePreloadHtml(bootstrapScriptContent, nonce) {
 	if (!match?.[1]) return "";
 	return `<link rel="modulepreload"${createNonceAttribute(nonce)} href="${escapeHtmlAttr(match[1])}" />\n`;
 }
+let __calibrioCalibrationGuardSource = "";
+function getCalibrioCalibrationGuardSource() {
+	if (!__calibrioCalibrationGuardSource) __calibrioCalibrationGuardSource = __calibrioReadFileSync(new URL("../../client/assets/calibration-live-guard.js", import.meta.url), "utf8");
+	return __calibrioCalibrationGuardSource;
+}
 function buildHeadInjectionHtml(navContext, bootstrapScriptContent, formState, insertedHTML, fontHTML, scriptNonce) {
 	const paramsScript = createInlineScriptTag("self.__VINEXT_RSC_PARAMS__=" + safeJsonStringify(navContext?.params ?? {}), scriptNonce);
 	const navScript = createInlineScriptTag("self.__VINEXT_RSC_NAV__=" + safeJsonStringify({
@@ -11776,7 +11782,8 @@ function buildHeadInjectionHtml(navContext, bootstrapScriptContent, formState, i
 		searchParams: navContext?.searchParams ? [...navContext.searchParams.entries()] : []
 	}), scriptNonce);
 	const formStateScript = formState === null ? "" : createInlineScriptTag("self[" + safeJsonStringify(RSC_FORM_STATE_GLOBAL) + "]=" + safeJsonStringify(formState), scriptNonce);
-	return paramsScript + navScript + formStateScript + extractModulePreloadHtml(bootstrapScriptContent, scriptNonce) + insertedHTML + fontHTML;
+	const calibrationGuardScript = createInlineScriptTag(getCalibrioCalibrationGuardSource(), scriptNonce) + "\n";
+	return paramsScript + navScript + formStateScript + calibrationGuardScript + extractModulePreloadHtml(bootstrapScriptContent, scriptNonce) + insertedHTML + fontHTML;
 }
 async function handleSsr(rscStream, navContext, fontData, options) {
 	return runWithNavigationContext(async () => {
