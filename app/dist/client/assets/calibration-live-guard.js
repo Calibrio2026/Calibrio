@@ -2,7 +2,7 @@
   const rootDataset = document.documentElement.dataset;
   if (rootDataset.calibrioCalibrationLiveGuard === "true") return;
   rootDataset.calibrioCalibrationLiveGuard = "true";
-  rootDataset.calibrioLiveGuardVersion = "calibrio-final-cert-templates-20260716-04";
+  rootDataset.calibrioLiveGuardVersion = "calibrio-final-cert-templates-20260716-08";
 
   const state = {
     fixing: false,
@@ -120,6 +120,70 @@
       return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
+    }
+  };
+
+  const storageTextValue = (value) => {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "object") return String(value.name || value.primaryProcedure || value.id || value.value || "");
+    return String(value);
+  };
+
+  const sanitizeStoredCalibrations = () => {
+    try {
+      const raw = localStorage.getItem("calibrio-calibrations");
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(parsed)) {
+        localStorage.setItem("calibrio-calibrations", "[]");
+        return;
+      }
+      let changed = false;
+      const sanitized = parsed
+        .filter((record) => record && typeof record === "object" && storageTextValue(record.id))
+        .map((record) => {
+          const next = { ...record };
+          const fields = [
+            "id",
+            "certificateType",
+            "procedure",
+            "standardId",
+            "standardUsed",
+            "customer",
+            "assetId",
+            "assetUsed",
+            "serialNumber",
+            "unit",
+            "pressureRating",
+            "range",
+            "model",
+            "maximum",
+            "createdAt",
+            "calDate",
+            "interval",
+            "customInterval",
+            "dueDate",
+            "certificateId",
+            "capacity",
+            "accuracy",
+          ];
+          fields.forEach((field) => {
+            const value = storageTextValue(next[field]);
+            if (next[field] !== value) changed = true;
+            next[field] = value;
+          });
+          if (!next.certificateType) {
+            next.certificateType = "WS-WP-CRT-004";
+            changed = true;
+          }
+          return next;
+        });
+      if (changed || sanitized.length !== parsed.length) {
+        localStorage.setItem("calibrio-calibrations", JSON.stringify(sanitized));
+      }
+    } catch {
+      try {
+        localStorage.setItem("calibrio-calibrations", "[]");
+      } catch {}
     }
   };
 
@@ -1125,16 +1189,7 @@
     }
     const assets = loadAssets();
     const customers = loadCustomers();
-    const certificateLibrary = readJsonArray("calibrio-certificates");
-    const certTypes = [
-      ...new Set([
-        ...readJsonArray("calibrio-certificate-types"),
-        ...certificateLibrary.flatMap((item) => [
-          item?.primaryProcedure,
-          ...(Array.isArray(item?.aliases) ? item.aliases : []),
-        ]),
-      ].map((item) => String(item || "").trim()).filter(Boolean)),
-    ];
+    const certTypes = certificateDropdownLabels(readCertificateTemplates());
     ensureAssetHistoryFallbackStyle();
     document.querySelector(".calibrio-calibration-editor-fallback")?.remove();
     const shade = document.createElement("div");
@@ -2383,9 +2438,9 @@
     const type = normalizeTemplateType(overrides.type || "pressure_gauge");
     const base = {
       id: "CERT-001",
-      name: isTorqueTemplateType(type) ? "Hydraulic Torque" : "Pressure Gauge",
-      primaryProcedure: isTorqueTemplateType(type) ? "WS-WP-CRT-006" : "WS-WP-CRT-004",
-      aliases: isTorqueTemplateType(type) ? ["WS-WP-CRT-006"] : ["WS-WP-7.2", "CRT-004", "WS-WP-CRT-004_rev_002"],
+      name: isManualTorqueTemplateType(type) ? "WS-WP-CRT-006 - Manual Torque Wrench" : isHydraulicTorqueTemplateType(type) ? "WS-WP-CRT-004 - Hydraulic Torque" : "WS-WP-CRT-004",
+      primaryProcedure: isManualTorqueTemplateType(type) ? "WS-WP-CRT-006 - Manual Torque Wrench" : isHydraulicTorqueTemplateType(type) ? "WS-WP-CRT-004 - Hydraulic Torque" : "WS-WP-CRT-004 - Pressure Gauge",
+      aliases: isManualTorqueTemplateType(type) ? ["Manual Torque Wrench", "CRT-006 Manual", "WS-WP-CRT-006", "Manual Torque"] : isHydraulicTorqueTemplateType(type) ? ["Hydraulic Torque", "WS-WP-CRT-004 Hydraulic", "CRT-004 Hydraulic", "WS-WP-CRT-006 - Hydraulic"] : ["WS-WP-CRT-004 - Pressure", "Pressure Gauge", "Pressure"],
       type,
       rev: isTorqueTemplateType(type) ? "" : "002",
       rangeLabel: templateDefaultUnit(type),
@@ -2436,9 +2491,9 @@
 
   const pressurePresetTemplate = (id = "CERT-001") => defaultCertificateTemplate({
     id,
-    name: "WS-WP-CRT-004 - Pressure Gauge",
-    primaryProcedure: "WS-WP-CRT-004",
-    aliases: ["WS-WP-7.2", "CRT-004", "WS-WP-CRT-004_rev_002"],
+    name: "WS-WP-CRT-004",
+    primaryProcedure: "WS-WP-CRT-004 - Pressure Gauge",
+    aliases: ["WS-WP-CRT-004 - Pressure", "Pressure Gauge", "Pressure"],
     type: "pressure_gauge",
     rev: "002",
     rangeLabel: "PSI",
@@ -2459,7 +2514,7 @@
     id,
     name: "WS-WP-CRT-004 - Hydraulic Torque",
     primaryProcedure: "WS-WP-CRT-004 - Hydraulic Torque",
-    aliases: ["Hydraulic Torque", "CRT-004 Hydraulic"],
+    aliases: ["Hydraulic Torque", "WS-WP-CRT-004 Hydraulic", "CRT-004 Hydraulic", "WS-WP-CRT-006 - Hydraulic"],
     type: "hydraulic_torque",
     rev: "002",
     rangeLabel: "FTLB",
@@ -2480,7 +2535,7 @@
     id,
     name: "WS-WP-CRT-006 - Manual Torque Wrench",
     primaryProcedure: "WS-WP-CRT-006 - Manual Torque Wrench",
-    aliases: ["WS-WP-CRT-006", "Manual Torque Wrench", "CRT-006 Manual"],
+    aliases: ["Manual Torque Wrench", "CRT-006 Manual", "WS-WP-CRT-006", "Manual Torque"],
     type: "manual_torque",
     rev: "006",
     rangeLabel: "FTLB",
@@ -2546,9 +2601,30 @@
     return normalized;
   };
 
-  const legacyTemplateProcedureList = (templates) => [
-    ...new Set(templates.flatMap((template) => [template.primaryProcedure, ...(template.aliases || [])]).filter(Boolean)),
+  const certificateDropdownLabels = (templates = defaultCertificateTemplates()) => [
+    ...new Set(templates.map((template) => String(template.name || template.primaryProcedure || "").trim()).filter(Boolean)),
   ];
+
+  const legacyTemplateProcedureList = (templates) => certificateDropdownLabels(templates);
+
+  const canonicalCertificateTemplates = () => defaultCertificateTemplates().map((template, index) => normalizeCertificateTemplate(template, index));
+
+  const certificateTemplatesNeedCleanup = (templates) => {
+    const normalized = (templates || []).map((template, index) => normalizeCertificateTemplate(template, index));
+    const canonical = canonicalCertificateTemplates();
+    if (normalized.length !== canonical.length) return true;
+    return canonical.some((expected) => !normalized.some((template) =>
+      String(template.id || "") === String(expected.id || "") &&
+      String(template.name || "") === String(expected.name || "") &&
+      String(template.primaryProcedure || "") === String(expected.primaryProcedure || "")
+    ));
+  };
+
+  const resetCertificateTemplateStorage = () => {
+    const canonical = canonicalCertificateTemplates();
+    persistCertificateTemplates(canonical);
+    return canonical;
+  };
 
   const isTemporaryQaCertificateTemplate = (template) =>
     (template?.name === "QA Temporary Torque Template" && template?.primaryProcedure === "WS-WP-CRT-006-QA") ||
@@ -2588,6 +2664,7 @@
   const readCertificateTemplates = () => {
     const saved = readJsonArray(CERT_TEMPLATE_KEY);
     if (saved.length) {
+      if (certificateTemplatesNeedCleanup(saved)) return resetCertificateTemplateStorage();
       const normalized = mergeCertificateTemplates(saved);
       try {
         localStorage.setItem(CERT_TEMPLATE_KEY, JSON.stringify(normalized));
@@ -2597,19 +2674,19 @@
     }
     const legacy = readJsonArray(LEGACY_CERT_TYPES_KEY).filter((item) => typeof item === "string" && item.trim());
     if (legacy.length) {
+      if (legacy.length > 3) return resetCertificateTemplateStorage();
       const migrated = legacy.map((procedure, index) => normalizeCertificateTemplate({
         id: `CERT-${String(index + 1).padStart(3, "0")}`,
-        name: procedure === "WS-WP-CRT-004" ? "WS-WP-CRT-004 - Pressure Gauge" : procedure,
+        name: procedure,
         primaryProcedure: procedure,
         type: /manual.*torque|torque.*wrench/i.test(procedure) ? "manual_torque" : /torque|ft.?lb/i.test(procedure) ? "hydraulic_torque" : /pressure|WS-WP-CRT-004/i.test(procedure) ? "pressure_gauge" : "other",
       }, index));
+      if (certificateTemplatesNeedCleanup(migrated)) return resetCertificateTemplateStorage();
       const merged = mergeCertificateTemplates(migrated);
       persistCertificateTemplates(merged);
       return merged;
     }
-    const seeded = defaultCertificateTemplates();
-    persistCertificateTemplates(seeded);
-    return seeded;
+    return resetCertificateTemplateStorage();
   };
 
   const requirementLabels = [
@@ -3510,6 +3587,7 @@
     return opened;
   };
 
+  sanitizeStoredCalibrations();
   installStorageProtection();
   installDraftProtection();
 

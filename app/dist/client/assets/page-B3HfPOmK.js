@@ -5544,9 +5544,9 @@ var isPressureCalibrationTemplate = (template) => {
 var defaultCalibrationCertificateTemplates = () => [
 	{
 		id: "CERT-001",
-		name: "WS-WP-CRT-004 - Pressure Gauge",
-		primaryProcedure: "WS-WP-CRT-004",
-		aliases: ["WS-WP-7.2", "CRT-004", "WS-WP-CRT-004_rev_002"],
+		name: "WS-WP-CRT-004",
+		primaryProcedure: "WS-WP-CRT-004 - Pressure Gauge",
+		aliases: ["WS-WP-CRT-004 - Pressure", "Pressure Gauge", "Pressure"],
 		type: "pressure_gauge",
 		rev: "002",
 		rangeLabel: "PSI",
@@ -5554,47 +5554,63 @@ var defaultCalibrationCertificateTemplates = () => [
 		points: 5,
 		testPoints: 5,
 		calc: "percentOfRange",
+		calculation: "percentOfRange",
 		percentPoints: [20, 40, 60, 80, 100],
+		percents: [20, 40, 60, 80, 100],
 		includeZero: false,
 		defaultAccuracy: "\u00b11.0%",
+		accuracy: "\u00b11.0%",
 		requires: { asFoundInc: true, asFoundDec: true, asLeftInc: true, asLeftDec: true },
+		tables: ["As Found Increasing", "As Found Decreasing", "As Left Increasing", "As Left Decreasing"],
 		showGraph: false
 	},
 	{
 		id: "CERT-002",
 		name: "WS-WP-CRT-004 - Hydraulic Torque",
 		primaryProcedure: "WS-WP-CRT-004 - Hydraulic Torque",
-		aliases: ["Hydraulic Torque", "CRT-004 Hydraulic"],
+		aliases: ["Hydraulic Torque", "WS-WP-CRT-004 Hydraulic", "CRT-004 Hydraulic", "WS-WP-CRT-006 - Hydraulic"],
 		type: "hydraulic_torque",
 		rev: "002",
 		rangeLabel: "FTLB",
 		unit: "FTLB",
+		inputUnit: "PSI",
 		points: 10,
 		testPoints: 10,
 		calc: "fixedList",
+		calculation: "fixedList",
 		fixedPoints: [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
+		fixedValues: [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
 		includeZero: false,
 		defaultAccuracy: "\u00b14.0%",
+		accuracy: "\u00b14.0%",
+		columns: ["Input PSI", "Target PSI", "Output FTLB"],
 		requires: { asFoundInc: true, asFoundDec: false, asLeftInc: true, asLeftDec: false },
+		tables: ["As Found", "As Left"],
 		showGraph: true
 	},
 	{
 		id: "CERT-003",
 		name: "WS-WP-CRT-006 - Manual Torque Wrench",
 		primaryProcedure: "WS-WP-CRT-006 - Manual Torque Wrench",
-		aliases: ["Manual Torque Wrench", "CRT-006 Manual", "WS-WP-CRT-006"],
+		aliases: ["Manual Torque Wrench", "CRT-006 Manual", "WS-WP-CRT-006", "Manual Torque"],
 		type: "manual_torque",
 		rev: "006",
 		rangeLabel: "FTLB",
 		unit: "FTLB",
+		units: ["FTLB", "IN/LBS", "LBS", "TON", "KG", "NM", "cNM"],
 		capacity: "250",
 		points: 5,
 		testPoints: 5,
 		calc: "percentOfCapacity",
+		calculation: "percentOfCapacity",
 		percentPoints: [20, 40, 60, 80, 100],
+		percents: [20, 40, 60, 80, 100],
 		includeZero: false,
 		defaultAccuracy: "\u00b14.0%",
+		accuracy: "\u00b14.0%",
+		columns: ["Target [unit]", "Input [unit]", "Output [unit]"],
 		requires: { asFoundInc: true, asFoundDec: false, asLeftInc: true, asLeftDec: false },
+		tables: ["As Found", "As Left"],
 		showGraph: true
 	}
 ];
@@ -5618,9 +5634,9 @@ var normalizeCalibrationTemplate = (template, index = 0) => {
 		capacity: String(template?.capacity || "").trim(),
 		points: Number.isFinite(points) && points > 0 ? points : hydraulicTorque ? 10 : 5,
 		testPoints: Number.isFinite(points) && points > 0 ? points : hydraulicTorque ? 10 : 5,
-		calc: String(template?.calc || (manualTorque ? "percentOfCapacity" : hydraulicTorque ? "fixedList" : "percentOfRange")).trim(),
-		percentPoints: Array.isArray(template?.percentPoints) && template.percentPoints.length ? template.percentPoints.map(Number).filter(Number.isFinite) : [20, 40, 60, 80, 100],
-		fixedPoints: Array.isArray(template?.fixedPoints) && template.fixedPoints.length ? template.fixedPoints.map(Number).filter(Number.isFinite) : [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
+		calc: String(template?.calc || template?.calculation || (manualTorque ? "percentOfCapacity" : hydraulicTorque ? "fixedList" : "percentOfRange")).trim(),
+		percentPoints: Array.isArray(template?.percentPoints) && template.percentPoints.length ? template.percentPoints.map(Number).filter(Number.isFinite) : Array.isArray(template?.percents) && template.percents.length ? template.percents.map(Number).filter(Number.isFinite) : [20, 40, 60, 80, 100],
+		fixedPoints: Array.isArray(template?.fixedPoints) && template.fixedPoints.length ? template.fixedPoints.map(Number).filter(Number.isFinite) : Array.isArray(template?.fixedValues) && template.fixedValues.length ? template.fixedValues.map(Number).filter(Number.isFinite) : [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
 		includeZero: template?.includeZero === true,
 		defaultAccuracy: String(template?.defaultAccuracy || template?.accuracy || (torque ? "\u00b14.0%" : "\u00b11.0%")).trim(),
 		requires: {
@@ -5643,29 +5659,52 @@ var mergeCalibrationTemplates = (templates) => {
 	defaultCalibrationCertificateTemplates().forEach(add);
 	return merged;
 };
+var calibrationTemplatesNeedCleanup = (templates) => {
+	const normalized = (templates || []).map((template, index) => normalizeCalibrationTemplate(template, index));
+	const canonical = defaultCalibrationCertificateTemplates().map((template, index) => normalizeCalibrationTemplate(template, index));
+	if (normalized.length !== canonical.length) return true;
+	return canonical.some((expected) => !normalized.some((template) => template.id === expected.id && template.name === expected.name && template.primaryProcedure === expected.primaryProcedure));
+};
+var writeDefaultCalibrationCertificateTemplates = () => {
+	const seeded = defaultCalibrationCertificateTemplates().map((template, index) => normalizeCalibrationTemplate(template, index));
+	try {
+		localStorage.setItem(CALIBRATION_CERTIFICATE_LIBRARY_KEY, JSON.stringify(seeded));
+		localStorage.setItem(CALIBRATION_CERTIFICATE_TYPES_KEY, JSON.stringify(seeded.map((template) => template.name)));
+	} catch {}
+	return seeded;
+};
 var readCalibrationCertificateTemplates = () => {
 	try {
 		const savedLibrary = localStorage.getItem(CALIBRATION_CERTIFICATE_LIBRARY_KEY);
 		if (savedLibrary) {
 			const parsed = JSON.parse(savedLibrary);
-			if (Array.isArray(parsed) && parsed.length) return mergeCalibrationTemplates(parsed);
+			if (Array.isArray(parsed) && parsed.length && !calibrationTemplatesNeedCleanup(parsed)) {
+				const normalized = mergeCalibrationTemplates(parsed);
+				localStorage.setItem(CALIBRATION_CERTIFICATE_LIBRARY_KEY, JSON.stringify(normalized));
+				localStorage.setItem(CALIBRATION_CERTIFICATE_TYPES_KEY, JSON.stringify(normalized.map((template) => template.name)));
+				return normalized;
+			}
 		}
 		const savedLegacy = localStorage.getItem(CALIBRATION_CERTIFICATE_TYPES_KEY);
 		const legacy = savedLegacy ? JSON.parse(savedLegacy) : [];
-		if (Array.isArray(legacy) && legacy.length) return mergeCalibrationTemplates(legacy.map((procedure, index) => ({
-			id: `CERT-${String(index + 1).padStart(3, "0")}`,
-			name: String(procedure || ""),
-			primaryProcedure: String(procedure || "")
-		})));
+		if (Array.isArray(legacy) && legacy.length && legacy.length <= 3) {
+			const migrated = legacy.map((procedure, index) => normalizeCalibrationTemplate({
+				id: `CERT-${String(index + 1).padStart(3, "0")}`,
+				name: String(procedure || ""),
+				primaryProcedure: String(procedure || "")
+			}, index));
+			if (!calibrationTemplatesNeedCleanup(migrated)) return migrated;
+		}
 	} catch {}
-	return mergeCalibrationTemplates([]);
+	return writeDefaultCalibrationCertificateTemplates();
 };
 var calibrationCertificateOptions = (templates) => {
 	const seen = new Set();
-	return templates.flatMap((template) => [
-		{ value: template.primaryProcedure, label: `${template.primaryProcedure} - ${template.name}`, templateId: template.id },
-		...(template.aliases || []).map((alias) => ({ value: alias, label: `${alias} (alias for ${template.primaryProcedure})`, templateId: template.id }))
-	]).filter((option) => {
+	return defaultCalibrationCertificateTemplates().map((template, index) => normalizeCalibrationTemplate(template, index)).map((template) => ({
+		value: template.name,
+		label: template.name,
+		templateId: template.id
+	})).filter((option) => {
 		const key = option.value.toLowerCase();
 		if (!option.value || seen.has(key)) return false;
 		seen.add(key);
@@ -5674,9 +5713,10 @@ var calibrationCertificateOptions = (templates) => {
 };
 var resolveCalibrationCertificateTemplate = (procedure, templates) => {
 	const needle = String(procedure || "").trim().toLowerCase();
-	const found = templates.find((template) => template.primaryProcedure.toLowerCase() === needle || (template.aliases || []).some((alias) => alias.toLowerCase() === needle));
+	const pool = mergeCalibrationTemplates([...(templates || []), ...defaultCalibrationCertificateTemplates()]);
+	const found = pool.find((template) => [template.name, template.primaryProcedure, ...(template.aliases || [])].some((value) => String(value || "").trim().toLowerCase() === needle));
 	if (found) return found;
-	return mergeCalibrationTemplates([]).find((template) => template.primaryProcedure.toLowerCase() === needle) || templates[0] || defaultCalibrationCertificateTemplates()[0];
+	return pool[0] || defaultCalibrationCertificateTemplates()[0];
 };
 var accuracyNumberText = (value) => {
 	const match = String(value || "").match(/-?\d+(\.\d+)?/);
@@ -5862,22 +5902,48 @@ var applyTemplateToCalibrationForm = (current, template, procedure, resetData = 
 	next.data = buildCalibrationDataForTemplate(next, template);
 	return next;
 };
+var calibrationTextValue = (value) => {
+	if (value === null || value === void 0) return "";
+	if (typeof value === "object") return String(value.name || value.primaryProcedure || value.id || value.value || "");
+	return String(value);
+};
 var normalizeCalibration = (record) => {
-	const readings = normalizeReadings(record.readings);
+	const source = record && typeof record === "object" ? record : {};
+	const readings = normalizeReadings(source.readings);
+	const certificateType = calibrationTextValue(source.certificateType || source.procedure);
+	const standardId = calibrationTextValue(source.standardId || source.standardUsed);
+	const assetId = calibrationTextValue(source.assetId || source.assetUsed);
+	const pressureRating = calibrationTextValue(source.pressureRating || source.range);
+	const createdAt = calibrationTextValue(source.createdAt || source.calDate);
 	return {
 		...blankCalibration(),
-		...record,
-		data: normalizeCalibrationDataObject(record.data),
-		range: record.range || record.pressureRating || "",
-		capacity: record.capacity || "",
-		accuracy: record.accuracy || record.defaultAccuracy || "",
-		copyAsFoundToAsLeft: record.copyAsFoundToAsLeft !== false,
+		...source,
+		id: calibrationTextValue(source.id),
+		certificateType: certificateType || "WS-WP-CRT-004",
+		standardId,
+		customer: calibrationTextValue(source.customer),
+		assetId,
+		serialNumber: calibrationTextValue(source.serialNumber),
+		unit: calibrationTextValue(source.unit) || "PSI",
+		pressureRating,
+		model: calibrationTextValue(source.model),
+		maximum: calibrationTextValue(source.maximum),
+		createdAt,
+		interval: calibrationTextValue(source.interval) || "12",
+		customInterval: calibrationTextValue(source.customInterval),
+		dueDate: calibrationTextValue(source.dueDate),
+		certificateId: calibrationTextValue(source.certificateId),
+		range: calibrationTextValue(source.range || source.pressureRating),
+		capacity: calibrationTextValue(source.capacity),
+		accuracy: calibrationTextValue(source.accuracy || source.defaultAccuracy),
+		data: normalizeCalibrationDataObject(source.data),
+		copyAsFoundToAsLeft: source.copyAsFoundToAsLeft !== false,
 		readings,
-		asLeftIncreasing: normalizeReadings(record.asLeftIncreasing, readings),
-		asFoundDecreasing: normalizeReadings(record.asFoundDecreasing, readings),
-		asLeftDecreasing: normalizeReadings(record.asLeftDecreasing, readings),
-		includePassFail: record.includePassFail === true,
-		readingOverrides: normalizeReadingOverrides(record.readingOverrides)
+		asLeftIncreasing: normalizeReadings(source.asLeftIncreasing, readings),
+		asFoundDecreasing: normalizeReadings(source.asFoundDecreasing, readings),
+		asLeftDecreasing: normalizeReadings(source.asLeftDecreasing, readings),
+		includePassFail: source.includePassFail === true,
+		readingOverrides: normalizeReadingOverrides(source.readingOverrides)
 	};
 };
 var calculateCalibrationDueDate = (dateText, interval, customInterval) => {
@@ -6148,24 +6214,34 @@ function sortCalibrationRecordsDescending(a, b) {
 	return calibrationRecordTimestamp(b) - calibrationRecordTimestamp(a) || String(b?.id || "").localeCompare(String(a?.id || ""), void 0, { numeric: true });
 }
 function calibrationHistoryEntry(record) {
+	const source = record && typeof record === "object" ? record : {};
+	const createdAt = calibrationTextValue(source.createdAt || source.calDate);
+	const dueDate = calibrationTextValue(source.dueDate);
 	return {
-		id: record.id,
-		certificateType: record.certificateType || "",
-		calDate: toDateInputValue(record.createdAt) || record.createdAt || "",
-		dueDate: toDateInputValue(record.dueDate) || record.dueDate || "",
-		customer: record.customer || "",
-		assetId: record.assetId || ""
+		id: calibrationTextValue(source.id),
+		certificateType: calibrationTextValue(source.certificateType || source.procedure),
+		calDate: toDateInputValue(createdAt) || createdAt || "",
+		dueDate: toDateInputValue(dueDate) || dueDate || "",
+		customer: calibrationTextValue(source.customer),
+		assetId: calibrationTextValue(source.assetId || source.assetUsed)
 	};
 }
 function mergeCalibrationHistory(asset, activeRecords) {
 	const byId = new Map();
 	if (Array.isArray(asset.calibrationHistory)) asset.calibrationHistory.forEach((entry) => {
-		if (entry?.id) byId.set(entry.id, entry);
+		const sanitized = calibrationHistoryEntry(entry);
+		if (sanitized.id) byId.set(sanitized.id, {
+			...entry,
+			...sanitized
+		});
 	});
-	activeRecords.forEach((record) => byId.set(record.id, {
-		...calibrationHistoryEntry(record),
-		...record
-	}));
+	activeRecords.forEach((record) => {
+		const sanitized = calibrationHistoryEntry(record);
+		if (sanitized.id) byId.set(sanitized.id, {
+			...record,
+			...sanitized
+		});
+	});
 	return [...byId.values()].sort(sortCalibrationRecordsDescending);
 }
 function markCalibrationHistoryDeleted(asset, record) {
@@ -9166,6 +9242,12 @@ function CertificateTypes({ go }) {
 		});
 		return merged;
 	};
+	const libraryTemplatesNeedCleanup = (records) => {
+	const normalized = (records || []).map((record, index) => normalizeTemplate(record, index));
+	const seeded = seedCertificateTemplates();
+	if (normalized.length !== seeded.length) return true;
+	return seeded.some((expected) => !normalized.some((record) => record.id === expected.id && record.name === expected.name && record.primaryProcedure === expected.primaryProcedure));
+};
 	const templatesFromLegacyTypes = (items) => {
 		const strings = Array.isArray(items) ? items.map((item) => typeof item === "string" ? item.trim() : String(item?.primaryProcedure || item?.name || "").trim()).filter(Boolean) : [];
 		const uniqueProcedures = strings.length ? [...new Set(strings)] : [];
@@ -9192,7 +9274,7 @@ function CertificateTypes({ go }) {
 		}, 0);
 		return `CERT-${String(max + 1).padStart(3, "0")}`;
 	};
-	const legacyProcedureList = (records) => [...new Set(records.flatMap((record) => [record.primaryProcedure, ...(Array.isArray(record.aliases) ? record.aliases : [])]).map((item) => String(item || "").trim()).filter(Boolean))];
+	const legacyProcedureList = (records) => [...new Set(records.map((record) => String(record.name || record.primaryProcedure || "").trim()).filter(Boolean))];
 	const formatPoints = (template) => template.includeZero ? `${template.testPoints} + zero` : String(template.testPoints);
 	const presetOptions = [
 		{ value: "blank", label: "Blank" },
@@ -9204,11 +9286,12 @@ function CertificateTypes({ go }) {
 	];
 	const [templates, setTemplates] = (0, import_react.useState)([]), [query, setQuery] = (0, import_react.useState)(""), [showModal, setShowModal] = (0, import_react.useState)(false), [editingId, setEditingId] = (0, import_react.useState)(null), [form, setForm] = (0, import_react.useState)(blankTemplate()), [drawerTemplateId, setDrawerTemplateId] = (0, import_react.useState)(null), [drawerTab, setDrawerTab] = (0, import_react.useState)("view");
 	(0, import_react.useEffect)(() => {
+		const seeded = seedCertificateTemplates();
 		try {
 			const savedLibrary = localStorage.getItem(certificateLibraryKey);
 			if (savedLibrary) {
 				const parsedLibrary = JSON.parse(savedLibrary);
-				if (Array.isArray(parsedLibrary)) {
+				if (Array.isArray(parsedLibrary) && !libraryTemplatesNeedCleanup(parsedLibrary)) {
 					const normalized = mergeLibraryTemplates(parsedLibrary);
 					setTemplates(normalized);
 					localStorage.setItem(certificateLibraryKey, JSON.stringify(normalized));
@@ -9216,14 +9299,10 @@ function CertificateTypes({ go }) {
 					return;
 				}
 			}
-			const savedLegacy = localStorage.getItem(legacyCertificateTypesKey);
-			const parsedLegacy = savedLegacy ? JSON.parse(savedLegacy) : [];
-			const migrated = templatesFromLegacyTypes(parsedLegacy);
-			setTemplates(migrated);
-			localStorage.setItem(certificateLibraryKey, JSON.stringify(migrated));
-			localStorage.setItem(legacyCertificateTypesKey, JSON.stringify(legacyProcedureList(migrated)));
+			setTemplates(seeded);
+			localStorage.setItem(certificateLibraryKey, JSON.stringify(seeded));
+			localStorage.setItem(legacyCertificateTypesKey, JSON.stringify(legacyProcedureList(seeded)));
 		} catch {
-			const seeded = templatesFromLegacyTypes([defaultProcedure]);
 			setTemplates(seeded);
 			localStorage.setItem(certificateLibraryKey, JSON.stringify(seeded));
 			localStorage.setItem(legacyCertificateTypesKey, JSON.stringify(legacyProcedureList(seeded)));
