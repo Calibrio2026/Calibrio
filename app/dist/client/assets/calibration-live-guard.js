@@ -2,7 +2,7 @@
   const rootDataset = document.documentElement.dataset;
   if (rootDataset.calibrioCalibrationLiveGuard === "true") return;
   rootDataset.calibrioCalibrationLiveGuard = "true";
-  rootDataset.calibrioLiveGuardVersion = "calibrio-final-cert-templates-20260716-08";
+  rootDataset.calibrioLiveGuardVersion = "calibrio-cert-view-print-data-20260716-09";
 
   const state = {
     fixing: false,
@@ -923,6 +923,7 @@
     style.textContent = ".calibrio-linked-history-fallback{grid-column:1/-1;border:1px solid #d5e2ef;border-radius:8px;padding:10px 12px;background:#f8fbff;color:#0a315f}.calibrio-linked-history-fallback b{display:block;margin-bottom:8px}.calibrio-linked-history-row{display:grid;grid-template-columns:minmax(95px,130px) 1fr auto;gap:8px;align-items:center;padding:7px 0;border-top:1px solid #e2edf6}.calibrio-linked-history-row:first-of-type{border-top:0}.calibrio-linked-history-row button{min-height:30px}.calibrio-linked-history-row .asset-link-valid,.calibrio-asset-id-fallback{background:transparent;border:0;color:#0077b6;text-align:left;font-weight:800;cursor:pointer;text-decoration:underline}.calibrio-linked-history-row .delete-certificate{border:1px solid #f1b8bd;color:#b4232d;background:#fff5f6}.calibrio-asset-detail-fallback{position:fixed;inset:0;z-index:9999;background:rgba(12,32,52,.34);padding:18px;overflow:auto}.calibrio-asset-detail-fallback .asset-detail-modal{background:#fff;border:1px solid #d6e2ee;border-radius:10px;max-width:1180px;margin:0 auto;box-shadow:0 24px 70px #12324f33;position:relative}.calibrio-asset-detail-fallback .asset-detail-header{display:flex;justify-content:space-between;gap:18px;border-bottom:1px solid #e3ebf3;padding:24px 28px 18px}.calibrio-asset-detail-fallback small{color:#7190ab;letter-spacing:.12em;font-size:10px;font-weight:800}.calibrio-asset-detail-fallback h2{margin:7px 0 0;color:#0b2d4f}.calibrio-asset-detail-fallback .x{position:absolute;right:14px;top:12px}.calibrio-asset-detail-fallback .asset-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 22px;padding:20px 28px}.calibrio-asset-detail-fallback .asset-detail-cell{display:grid;grid-template-columns:180px minmax(0,1fr);border-bottom:1px solid #e8eef4}.calibrio-asset-detail-fallback .asset-detail-cell b{background:#f6f9fc;padding:10px 12px}.calibrio-asset-detail-fallback .asset-detail-cell span{padding:10px 12px;overflow-wrap:anywhere}.calibrio-asset-detail-fallback .asset-detail-calibrations{border-top:1px solid #e3ebf3;padding:18px 28px 28px}.calibrio-asset-detail-fallback table{width:100%;border-collapse:collapse}.calibrio-asset-detail-fallback th,.calibrio-asset-detail-fallback td{border-bottom:1px solid #e5edf5;padding:8px;text-align:left}.calibrio-asset-detail-fallback .certificate-actions{display:grid;grid-template-columns:repeat(5,minmax(max-content,1fr));gap:6px}.calibrio-asset-detail-fallback .asset-log-note{color:#68798b;background:#eef2f6;border-radius:12px;padding:5px 8px;font-size:10px;font-weight:800;display:inline-flex}.calibrio-asset-detail-fallback .asset-history-deleted td{color:#7b8794;background:#f8f8f8}";
     style.textContent += ".calibrio-calibration-preview-fallback,.calibrio-calibration-editor-fallback{position:fixed;inset:0;z-index:10002;background:rgba(12,32,52,.34);padding:10px;overflow:auto}.calibrio-cert-preview-card{background:#fff;border:1px solid #d6e2ee;border-radius:6px;width:min(816px,calc(100vw - 20px));min-height:1056px;max-height:none;margin:0 auto;box-shadow:0 24px 70px #12324f33;position:relative;color:#0a315f;overflow:visible}.calibrio-calibration-editor-card{background:#fff;border:1px solid #d6e2ee;border-radius:8px;width:min(1088px,calc(100vw - 16px));max-height:calc(100vh - 12px);margin:0 auto;box-shadow:0 24px 70px #12324f33;position:relative;color:#0a315f;overflow:auto}.certificate-preview.calibrio-cert-preview-card{background:#fff!important;padding:0!important;max-height:none!important;overflow:visible!important}.calibrio-cert-preview-card .x,.calibrio-calibration-editor-card .x{position:absolute;right:10px;top:8px}.calibrio-cert-preview-header{display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:3px double #203846;padding:7px 14px}.calibrio-cert-preview-header img{width:min(292px,43vw);height:auto}.calibrio-cert-preview-header div{padding-right:24px;text-align:right}.calibrio-cert-preview-header b{display:block;font-size:17px}.calibrio-cert-preview-header span{font-weight:800}.calibrio-cert-metadata{display:grid;grid-template-columns:1.08fr 1fr 1fr;gap:9px;border-bottom:3px double #203846;padding:7px 14px}.calibrio-cert-info-section{min-width:0}.calibrio-cert-info-section h3{margin:0 0 3px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#536f8a}.calibrio-cert-info-section p{display:grid;grid-template-columns:88px minmax(0,1fr);gap:5px;margin:0;line-height:1.12;font-size:11px}.calibrio-cert-info-section b{color:#203d5a}.calibrio-cert-info-section span{overflow-wrap:anywhere;word-break:break-word}.calibrio-cert-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;border-bottom:1px solid #dce6ef;padding:8px 12px}.calibrio-cert-summary p{margin:0;border-bottom:1px solid #e7eef5;padding:6px}.calibrio-cert-summary b{display:block;color:#536f8a}.calibrio-cert-reading-grid{display:grid;grid-template-columns:1fr;gap:7px;padding:9px 14px}.calibrio-cert-panel{min-width:0;overflow:visible}.calibrio-cert-panel h4,.calibrio-cert-standard h4{margin:0 0 3px;font-size:12px}.calibrio-cert-preview-card table,.calibrio-calibration-editor-card table{width:100%;border-collapse:collapse;table-layout:fixed}.calibrio-cert-preview-card th,.calibrio-cert-preview-card td{border:1px solid #cbd8e4;padding:3px 4px;text-align:center;line-height:1.1;overflow-wrap:anywhere;word-break:break-word}.calibrio-cert-preview-card th{background:#f3f7fb;font-size:9px}.calibrio-cert-preview-card td{font-size:10px}.calibrio-cert-standard{padding:0 14px 8px}.calibrio-cert-notes{border-top:1px solid #dce6ef;margin:0 14px;padding:5px 0 0;font-size:8px;line-height:1.18}.calibrio-cert-notes p{margin:2px 0}.calibrio-cert-signatures{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin:10px 14px 0}.calibrio-cert-signatures span{display:grid;grid-template-columns:82px minmax(0,1fr);align-items:end;gap:7px}.calibrio-cert-signatures b{border-bottom:1px solid #203846;min-height:14px}.calibrio-cert-signatures small{grid-column:2;text-align:center;color:#536f8a}.calibrio-cert-preview-card footer,.calibrio-calibration-editor-card footer{display:flex;justify-content:flex-end;border-top:1px solid #e3ebf3;padding:10px 14px}.calibrio-calibration-editor-card header{border-bottom:1px solid #e3ebf3;padding:22px 28px 16px}.calibrio-calibration-editor-card header small{color:#7190ab;letter-spacing:.12em;font-size:10px;font-weight:800}.calibrio-calibration-editor-card header h2{margin:6px 0 0}.calibrio-editor-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:18px 28px}.calibrio-editor-fields label,.calibrio-editor-reading-panel label{display:grid;gap:6px;font-weight:700}.calibrio-editor-fields input,.calibrio-editor-fields select,.calibrio-editor-reading-panel input{border:1px solid #cfe0ef;border-radius:6px;min-height:34px;padding:7px 9px}.calibrio-editor-check{grid-template-columns:auto 1fr!important;align-items:center;display:flex!important}.calibrio-editor-check input{min-height:auto}.calibrio-editor-reading-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;padding:0 28px 18px}.calibrio-editor-reading-panel{border:1px solid #d7e4f0;border-radius:8px;padding:12px}.calibrio-editor-reading-panel h4{margin:0 0 10px}.calibrio-editor-reading-head,.calibrio-editor-reading-panel label{grid-template-columns:minmax(110px,1fr) minmax(160px,2fr);align-items:center;border-bottom:1px solid #edf2f7;padding:6px 0}.calibrio-editor-reading-head{display:grid;color:#536f8a;font-size:11px}.save-certificate,.print-certificate{background:#1788b6;color:#fff;border:0;border-radius:6px;padding:8px 15px;font-weight:800}.pass{color:#14723a;font-weight:bold}.fail{color:#b52732;font-weight:bold}@media (width<=900px){.calibrio-cert-metadata{grid-template-columns:1fr}.calibrio-cert-preview-header{align-items:flex-start;flex-direction:column}.calibrio-cert-preview-header div{text-align:left;padding-right:24px}.calibrio-cert-preview-header img{width:min(292px,80vw)}.calibrio-cert-signatures{grid-template-columns:1fr}}";
     style.textContent += ".calibrio-linked-history-row{grid-template-columns:minmax(90px,120px) minmax(0,1fr) minmax(150px,190px)!important}.calibrio-linked-history-row span{min-width:0;overflow-wrap:anywhere;line-height:1.25}.calibrio-linked-history-row .certificate-actions{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:6px!important;min-width:0!important}.calibrio-linked-history-row .certificate-actions button{width:100%;min-width:0;padding:6px 7px!important}.calibrio-asset-detail-fallback .asset-detail-header-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px}.calibrio-asset-detail-fallback .asset-edit-button{color:#8a6500;background:#fff9e7;border:1px solid #d5a224;border-radius:6px;padding:9px 12px;font-size:12px;font-weight:800}.calibrio-asset-editor-fallback{position:fixed;inset:0;z-index:10003;background:rgba(12,32,52,.34);padding:10px;overflow:auto}.calibrio-asset-editor-fallback .calibrio-calibration-editor-card{width:min(760px,calc(100vw - 16px))}@media (max-width:780px){.calibrio-linked-history-row{grid-template-columns:1fr!important}.calibrio-asset-detail-fallback .asset-detail-header-actions{justify-content:flex-start}}";
+    style.textContent += ".calibrio-cert-preview-toolbar{position:sticky;top:0;z-index:3;display:flex;justify-content:flex-end;gap:8px;background:#fff;border-bottom:1px solid #dce6ef;padding:10px 14px}.calibrio-cert-preview-toolbar .view-certificate{background:#fff;color:#31516e;border:1px solid #cbd8e5;border-radius:6px;padding:8px 15px;font-weight:800}.calibrio-cert-preview-card #cert-print-area{background:#fff}.calibrio-cert-reading-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;align-items:start}.calibrio-cert-panel.calibrio-cert-wide{grid-column:1/-1}.calibrio-cert-panel .cal-dynamic-graph{padding:0;background:#f0f1f3;border:1px solid #cbd8e4}.calibrio-cert-panel .cal-dynamic-graph svg{display:block;width:100%;height:auto;max-height:230px}.calibrio-calibration-preview-fallback .calibrio-cert-preview-card{width:min(8.5in,calc(100vw - 20px));min-height:11in}.calibrio-cert-preview-card footer{gap:8px}.calibrio-cert-preview-card footer .save-certificate,.calibrio-cert-preview-card footer .print-certificate{margin-left:8px}@media (max-width:760px){.calibrio-cert-reading-grid{grid-template-columns:1fr!important}.calibrio-cert-preview-toolbar{justify-content:flex-start;flex-wrap:wrap}.calibrio-calibration-preview-fallback .calibrio-cert-preview-card{min-height:auto}}";
     document.head?.appendChild(style);
   };
 
@@ -985,12 +986,13 @@
   const renderTorquePreviewTable = (title, rows, type, unit) => {
     const isHydraulic = isHydraulicTorqueTemplateType(type);
     const headers = isHydraulic ? ["Input PSI", "Target PSI", `Output ${unit}`] : [`Target ${unit}`, `Input ${unit}`, `Output ${unit}`];
-    return `<div class="calibrio-cert-panel"><h4>${escapeHtml(title)}</h4><table><thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${(rows || []).map((row) => {
+    const bodyRows = Array.isArray(rows) && rows.length ? rows : [];
+    return `<div class="calibrio-cert-panel"><h4>${escapeHtml(title)}</h4><table><thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${bodyRows.length ? bodyRows.map((row) => {
       const cells = isHydraulic
         ? [row.inputPSI, row.targetPSI || row.target, row.outputFTLB || row.output]
         : [row.target, row.input || row.target, row.output || row.outputFTLB];
       return `<tr>${cells.map((cell) => `<td>${escapeHtml(displayCertValue(cell))}</td>`).join("")}</tr>`;
-    }).join("")}</tbody></table></div>`;
+    }).join("") : `<tr><td colspan="${headers.length}">No calibration data entered - go to Edit and enter Output readings</td></tr>`}</tbody></table></div>`;
   };
 
   const renderTorquePreviewGraph = (title, rows, type, unit) => {
@@ -1008,17 +1010,27 @@
     return `<div class="calibrio-cert-panel"><h4>${escapeHtml(title)} Graph</h4><div class="cal-dynamic-graph">${graph}</div></div>`;
   };
 
+  const firstPreviewRows = (...candidates) => candidates.find((rows) => Array.isArray(rows) && rows.length) || [];
+
+  const renderTorqueConversionPreviewTable = (record, type, unit) => {
+    if (!isHydraulicTorqueTemplateType(type)) return "";
+    const conversionRows = firstPreviewRows(record.data?.conversionChart, record.data?.asFoundTorque, record.data?.asFound);
+    if (!conversionRows.length) return "";
+    return `<div class="calibrio-cert-panel calibrio-cert-wide"><h4>Pressure / Torque Conversion Chart</h4><table><thead><tr><th>Pressure PSI</th><th>Torque ${escapeHtml(unit || "FTLB")}</th></tr></thead><tbody>${conversionRows.map((row) => `<tr><td>${escapeHtml(displayCertValue(row.pressurePSI, row.inputPSI, row.input, row.targetPSI))}</td><td>${escapeHtml(displayCertValue(row.torqueFTLBS, row.outputFTLB, row.output))}</td></tr>`).join("")}</tbody></table></div>`;
+  };
+
   const calibrationPreviewReadingsHtml = (record) => {
     const type = recordTemplateType(record);
     const unit = record.unit || (isTorqueTemplateType(type) ? "FTLB" : "PSI");
     if (isTorqueTemplateType(type)) {
-      const asFound = record.data?.asFoundTorque || record.data?.asFound || [];
-      const asLeft = record.data?.asLeftTorque || record.data?.asLeft || [];
+      const asFound = firstPreviewRows(record.data?.asFoundTorque, record.data?.asFound);
+      const asLeft = firstPreviewRows(record.data?.asLeftTorque, record.data?.asLeft);
       return [
         renderTorquePreviewTable("As Found", asFound, type, unit),
-        renderTorquePreviewGraph("As Found", asFound, type, unit),
         renderTorquePreviewTable("As Left", asLeft, type, unit),
+        renderTorquePreviewGraph("As Found", asFound, type, unit),
         renderTorquePreviewGraph("As Left", asLeft, type, unit),
+        renderTorqueConversionPreviewTable(record, type, unit),
       ].join("");
     }
     if (hasDynamicPressureData(record)) {
@@ -1060,6 +1072,7 @@
   const certFact = (label, value) => `<p><b>${escapeHtml(label)}</b><span>${escapeHtml(displayCertValue(value))}</span></p>`;
 
   const calibrationPreviewHtml = (record, assets = loadAssets(), customers = loadCustomers()) => {
+    record = normalizeCalibrationRecord(record || {});
     const customer = customers.find((item) => item.name === record.customer);
     const asset = assets.find((item) => item.id === record.assetId);
     const standard = assets.find((item) => item.id === record.standardId);
@@ -1122,12 +1135,18 @@
       window.alert("The selected calibration certificate could not be found on this computer.");
       return;
     }
+    const storedRecord = resolveCalibrationById(record.id);
+    const printableRecord = normalizeCalibrationRecord({ ...(storedRecord || {}), ...(record || {}) });
+    if (!openPrintDialog) {
+      showCalibrationPreviewRecord(printableRecord, assets, customers);
+      return;
+    }
     const printWindow = window.open("", "_blank");
     if (!printWindow) {
       window.alert("The print window was blocked. Allow popups for Calibrio, then try Print again.");
       return;
     }
-    printWindow.document.write(buildPrintableCalibrationHtml(record, assets, customers));
+    printWindow.document.write(buildPrintableCalibrationHtml(printableRecord, assets, customers));
     printWindow.document.close();
     printWindow.focus();
     if (openPrintDialog) setTimeout(() => printWindow.print(), 250);
@@ -1135,23 +1154,33 @@
 
   window.calibrioOpenPrintableCalibrationRecord = openPrintableCalibrationRecord;
 
+  const showCalibrationPreviewRecord = (record, assets = loadAssets(), customers = loadCustomers()) => {
+    const normalized = normalizeCalibrationRecord(record || {});
+    ensureAssetHistoryFallbackStyle();
+    document.querySelector(".calibrio-calibration-preview-fallback")?.remove();
+    const shade = document.createElement("div");
+    shade.className = "calibrio-calibration-preview-fallback";
+    shade.innerHTML = `<section class="calibrio-cert-preview-card" role="dialog" aria-modal="true" aria-label="Calibration certificate preview">
+      <div class="calibrio-cert-preview-toolbar" aria-label="Certificate actions">
+        <button type="button" class="print-certificate" data-calibrio-print-calibration="${escapeHtml(normalized.id)}">Print</button>
+        <button type="button" class="save-certificate" data-calibrio-download-pdf="${escapeHtml(normalized.id)}">Download PDF</button>
+        <button type="button" class="view-certificate" data-calibrio-close-preview>Close</button>
+      </div>
+      <div id="cert-print-area">${calibrationPreviewHtml(normalized, assets, customers)}</div>
+    </section>`;
+    shade.addEventListener("mousedown", (event) => {
+      if (event.target === shade || event.target.closest("[data-calibrio-close-preview]")) shade.remove();
+    });
+    document.body.appendChild(shade);
+  };
+
   const showCalibrationPreviewFallback = (id) => {
     const record = resolveCalibrationById(id);
     if (!record) {
       window.alert(`Calibration ${id || ""} could not be found on this computer.`);
       return;
     }
-    ensureAssetHistoryFallbackStyle();
-    document.querySelector(".calibrio-calibration-preview-fallback")?.remove();
-    const shade = document.createElement("div");
-    shade.className = "calibrio-calibration-preview-fallback";
-    shade.innerHTML = `<section class="calibrio-cert-preview-card" role="dialog" aria-modal="true" aria-label="Calibration certificate preview">
-      ${calibrationPreviewHtml(record)}
-    </section>`;
-    shade.addEventListener("mousedown", (event) => {
-      if (event.target === shade || event.target.closest("[data-calibrio-close-preview]")) shade.remove();
-    });
-    document.body.appendChild(shade);
+    showCalibrationPreviewRecord(record);
   };
 
   const completeVisibleCertificatePreviews = () => {
@@ -1596,6 +1625,7 @@
     const style = document.createElement("style");
     style.id = "calibrio-dynamic-calibration-style";
     style.textContent = ".calibrio-dynamic-fallback{grid-column:1/-1;border-top:1px solid #d8e5f0;margin-top:10px;padding-top:18px}.calibrio-dynamic-fallback .cal-data-controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.calibrio-dynamic-fallback label{font-weight:700;color:#0a315f}.calibrio-dynamic-fallback input,.calibrio-dynamic-fallback select{border:1px solid #cfe0ef;border-radius:6px;min-height:34px;padding:7px 9px;width:100%}.calibrio-dynamic-fallback .cal-check{display:flex!important;align-items:center;gap:8px;margin-top:20px}.calibrio-dynamic-fallback .cal-check input{width:auto;min-height:auto}.cal-dynamic-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.cal-dynamic-panel{border:1px solid #d6e4f1;border-radius:8px;overflow:hidden;background:#fff}.cal-dynamic-panel h3{margin:0;padding:10px 12px;font-size:15px;background:#fff}.cal-dynamic-table{width:100%;border-collapse:collapse;table-layout:fixed}.cal-dynamic-table th,.cal-dynamic-table td{border-top:1px solid #e1ebf4;padding:8px 10px;text-align:center}.cal-dynamic-table th{background:#f4f8fc;color:#536f8a;font-size:11px}.cal-dynamic-table td:first-child,.cal-dynamic-table th:first-child{text-align:left}.cal-dynamic-table input{min-height:32px}.cal-dynamic-muted{color:#6a8197;font-size:12px}.cal-dynamic-graph{border-top:1px solid #e1ebf4;background:#f2f3f5;padding:10px}.cal-dynamic-graph svg{display:block;width:100%;height:210px}.cal-dynamic-graph text{font-size:10px;fill:#28394a}.cal-dynamic-graph .axis{stroke:#1d2c3b;stroke-width:1.2}.cal-dynamic-graph .grid{stroke:#c8d0d8;stroke-width:.7}.cal-dynamic-graph .line{fill:none;stroke:#111;stroke-width:2.4}.cal-dynamic-graph .dot{fill:#111}.cal-dynamic-copy{display:flex;align-items:center;gap:8px;margin:0 12px 10px;font-size:12px;font-weight:700}.cal-dynamic-copy input{width:auto;min-height:auto}.cal-dynamic-deviation{font-weight:700;color:#234866}@media (max-width:950px){.calibrio-dynamic-fallback .cal-data-controls,.cal-dynamic-grid{grid-template-columns:1fr}}";
+    style.textContent += ".shade:has(.calibration-modal){align-items:center!important;justify-content:center!important;padding:12px!important;overflow:auto!important}.calibration-modal{width:min(1320px,calc(100vw - 24px))!important;max-height:calc(100vh - 24px)!important;overflow:auto!important;padding:24px 28px 76px!important;box-sizing:border-box!important}.calibration-modal>.asset-form-fields{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:14px!important}.calibrio-dynamic-fallback .cal-dynamic-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;align-items:start}.calibrio-dynamic-fallback .cal-dynamic-panel{min-width:0!important;overflow-x:auto!important}.calibrio-dynamic-fallback .cal-dynamic-table{min-width:540px!important}.calibrio-dynamic-fallback .cal-dynamic-graph svg{height:auto!important;max-height:270px!important}@media (max-width:980px){.calibration-modal>.asset-form-fields,.calibrio-dynamic-fallback .cal-dynamic-grid{grid-template-columns:1fr!important}}";
     document.head?.appendChild(style);
   };
 
@@ -2221,6 +2251,13 @@
       event.stopPropagation();
       const record = resolveCalibrationById(xlsxButton.dataset.calibrioDownloadXlsx);
       downloadWsWpCrt004Workbook(record);
+      return;
+    }
+    const pdfButton = event.target?.closest?.("[data-calibrio-download-pdf]");
+    if (pdfButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      printCalibrationById(pdfButton.dataset.calibrioDownloadPdf);
       return;
     }
     const printButton = event.target?.closest?.("[data-calibrio-print-calibration]");

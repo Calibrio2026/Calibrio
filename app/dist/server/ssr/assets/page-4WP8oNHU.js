@@ -8091,10 +8091,21 @@ function CalibrationWorkspace({ assets, onAssetsChange }) {
 		}
 	};
 	const openCertificate = (record, openPrintDialog) => {
+		const openTemplate = resolveCalibrationCertificateTemplate(record?.certificateType || record?.procedure, certificateTemplates);
+		const normalizedOpenRecord = normalizeCalibration(record);
+		const preparedOpenRecord = applyTemplateToCalibrationForm(normalizedOpenRecord, openTemplate, normalizedOpenRecord.certificateType || openTemplate.primaryProcedure, false);
+		const certificateRecord = {
+			...normalizedOpenRecord,
+			...preparedOpenRecord,
+			certificateId: normalizedOpenRecord.certificateId || openTemplate.id,
+			certificateType: normalizedOpenRecord.certificateType || openTemplate.primaryProcedure,
+			data: buildCalibrationDataForTemplate(preparedOpenRecord, openTemplate)
+		};
 		if (typeof window !== "undefined" && typeof window.calibrioOpenPrintableCalibrationRecord === "function") {
-			window.calibrioOpenPrintableCalibrationRecord(record, assets, customers, openPrintDialog);
+			window.calibrioOpenPrintableCalibrationRecord(certificateRecord, assets, customers, openPrintDialog);
 			return;
 		}
+		record = certificateRecord;
 		const customer = customers.find((item) => item.name === record.customer), asset = assets.find((item) => item.id === record.assetId), standard = assets.find((item) => item.id === record.standardId), rating = Number(record.pressureRating), allowed = Number(record.maximum), points = buildPressurePoints(rating);
 		const escape = (value) => value.replace(/[&<>"']/g, (character) => ({
 			"&": "&amp;",
